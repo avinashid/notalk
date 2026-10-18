@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Global Chat</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Join Modal -->
+  <div id="join-modal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-icon-wrap">💬</div>
+      <h1 class="modal-title">Welcome to Global Chat</h1>
+      <p class="modal-subtitle">Pick a username to join the global conversation. No password or email needed.</p>
+
+      <form id="join-form" action="javascript:void(0);" onsubmit="event.preventDefault(); return false;">
+        <div class="input-group">
+          <label for="username-input">Your Username</label>
+          <div class="input-wrapper">
+            <span class="input-prefix">@</span>
+            <input type="text" id="username-input" placeholder="e.g. alex, sarah, jordan" required maxlength="20" autocomplete="off" autofocus>
+            <button type="button" id="random-name-btn" class="icon-btn-secondary" title="Random handle">🎲</button>
+          </div>
+        </div>
+
+        <div class="join-advanced-toggle">
+          <button type="button" id="toggle-import-key-btn" class="text-link-btn">🔑 Have an existing Account Key?</button>
+        </div>
+
+        <div id="import-key-container" class="input-group hidden" style="margin-top: 0.75rem;">
+          <label for="import-key-input">Account Key / Secret</label>
+          <div class="input-wrapper">
+            <input type="text" id="import-key-input" placeholder="Paste account key to restore identity..." autocomplete="off">
+          </div>
+        </div>
+
+        <button type="button" id="join-btn" class="primary-btn">
+          <span>Start Chatting</span>
+          <span class="btn-arrow">→</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main App Layout -->
+  <div id="app" class="app-layout hidden">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <button id="toggle-sidebar-btn" class="icon-btn mobile-only" aria-label="Toggle Members List">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        </button>
+        <div class="room-title-group">
+          <div class="room-icon">#</div>
+          <div>
+            <h1 class="room-heading">Global Chat</h1>
+            <div class="room-subheading">
+              <span class="status-dot online"></span>
+              <span id="header-member-count">1 Member Online</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <!-- Pinned Messages Toggle -->
+        <button id="toggle-pins-btn" class="header-btn" title="View Pinned Messages">
+          <span class="btn-icon">📌</span>
+          <span class="btn-label">Pinned</span>
+          <span id="pin-badge" class="badge-count hidden">0</span>
+        </button>
+
+        <!-- Storage / Retention Settings Dropdown -->
+        <div class="dropdown-wrapper">
+          <button id="settings-btn" class="header-btn" title="Chat History & Retention Settings">
+            <span class="btn-icon">⏱️</span>
+            <span class="btn-label" id="retention-label">Saved: 24h</span>
+          </button>
+          <div id="settings-menu" class="dropdown-menu hidden">
+            <div class="dropdown-header">Message Retention</div>
+            <label class="dropdown-item">
+              <input type="radio" name="retention" value="none">
+              <span>Don't Save (Session Only)</span>
+            </label>
+            <label class="dropdown-item">
+              <input type="radio" name="retention" value="1h">
+              <span>Keep for 1 Hour</span>
+            </label>
+            <label class="dropdown-item">
+              <input type="radio" name="retention" value="24h" checked>
+              <span>Keep for 24 Hours</span>
+            </label>
+            <label class="dropdown-item">
+              <input type="radio" name="retention" value="7d">
+              <span>Keep for 7 Days (Max)</span>
+            </label>
+            <div class="dropdown-divider"></div>
+            <button id="clear-history-btn" class="dropdown-action-btn danger">Clear Local History</button>
+          </div>
+        </div>
+
+        <!-- Theme Switcher Dropdown -->
+        <div class="dropdown-wrapper">
+          <button id="theme-btn" class="header-btn" title="Change Theme">
+            <span class="btn-icon" id="theme-icon">🌙</span>
+            <span class="btn-label" id="theme-label">Dark</span>
+          </button>
+          <div id="theme-menu" class="dropdown-menu hidden">
+            <div class="dropdown-header">Appearance</div>
+            <button class="dropdown-theme-btn" data-theme="dark">🌙 Dark (Midnight)</button>
+            <button class="dropdown-theme-btn" data-theme="slate">🌌 Slate (Dim)</button>
+            <button class="dropdown-theme-btn" data-theme="light">☀️ Light (Clean)</button>
+            <button class="dropdown-theme-btn" data-theme="cyber">⚡ Neon (Cyber)</button>
+          </div>
+        </div>
+
+        <!-- User Profile Pill (Manage Identity) -->
+        <button class="user-pill-btn" id="current-user-pill" title="Manage Public & Private Identity">
+          <div class="avatar user-avatar" id="my-avatar">U</div>
+          <div class="user-pill-info">
+            <span class="user-pill-name" id="my-username">user</span>
+            <span class="user-pill-sub" id="my-public-id-short">pub_...</span>
+          </div>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="app-body">
+      <!-- Members Sidebar -->
+      <aside class="app-sidebar" id="app-sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-title-group">
+            <h2>Members</h2>
+            <span class="online-counter" id="online-counter">1</span>
+          </div>
+          <button id="close-sidebar-btn" class="icon-btn mobile-only" aria-label="Close sidebar">✕</button>
+        </div>
+
+        <div class="sidebar-search">
+          <input type="text" id="user-search" placeholder="Search members..." autocomplete="off">
+        </div>
+
+        <div class="user-list" id="user-list">
+          <!-- Populated dynamically -->
+        </div>
+      </aside>
+
+      <!-- Main Chat Area -->
+      <main class="chat-viewport">
+        <!-- Pinned Messages Banner -->
+        <div id="pinned-banner" class="pinned-banner hidden">
+          <div class="pinned-banner-content">
+            <span class="pinned-icon">📌</span>
+            <div class="pinned-text-wrap">
+              <span class="pinned-label">Pinned Message</span>
+              <span id="pinned-text" class="pinned-text">No pinned messages yet</span>
+            </div>
+          </div>
+          <button id="unpin-current-btn" class="icon-btn-subtle" title="Unpin message">✕</button>
+        </div>
+
+        <!-- Messages Feed -->
+        <div class="messages-container" id="messages-container">
+          <div class="welcome-card">
+            <div class="welcome-icon">💬</div>
+            <h4>Welcome to the Global Chat</h4>
+            <p>This is the public room. Say hello, discuss ideas, or pin important messages to keep them handy.</p>
+          </div>
+        </div>
+
+        <!-- Typing Indicator -->
+        <div class="typing-indicator-bar" id="typing-indicator" style="display: none;">
+          <div class="typing-dots"><span></span><span></span><span></span></div>
+          <span id="typing-text">someone is typing...</span>
+        </div>
+
+        <!-- Chat Input Footer -->
+        <footer class="chat-footer">
+          <form id="chat-form" class="chat-input-form" action="javascript:void(0);">
+            <div class="chat-input-container">
+              <input 
+                type="text" 
+                id="message-input" 
+                placeholder="Write a message... (Press Enter to send)" 
+                maxlength="1000" 
+                autocomplete="off"
+              >
+              <button type="submit" id="send-btn" class="send-btn" aria-label="Send message">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
+            </div>
+          </form>
+        </footer>
+      </main>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <!-- Identity & Profile Modal -->
+  <div id="identity-modal" class="modal-overlay hidden">
+    <div class="modal-card identity-card">
+      <div class="modal-card-top">
+        <div class="modal-icon-wrap" style="width: 44px; height: 44px; font-size: 1.3rem; margin-bottom: 0.5rem;">🔑</div>
+        <button id="close-identity-btn" class="icon-btn-subtle close-modal-btn" aria-label="Close modal">✕</button>
+      </div>
+      <h2 class="modal-title" style="font-size: 1.25rem;">Account & Identity</h2>
+      <p class="modal-subtitle">Your identity decides message ownership. Username can change anytime, but messages from your identity stay on your right side.</p>
+
+      <!-- Section: Username -->
+      <div class="identity-section">
+        <label class="section-label">Username</label>
+        <div class="input-wrapper">
+          <span class="input-prefix">@</span>
+          <input type="text" id="edit-username-input" maxlength="20" placeholder="Username">
+          <button type="button" id="save-username-btn" class="pill-btn primary">Update</button>
+        </div>
+      </div>
+
+      <!-- Section: Public Identity -->
+      <div class="identity-section">
+        <div class="label-with-action">
+          <label class="section-label">Public Identity (Visible to Everyone)</label>
+          <button type="button" id="copy-my-pubkey-btn" class="text-link-btn">📋 Copy</button>
+        </div>
+        <div class="key-display-pill" id="my-public-id-display">pub_loading...</div>
+        <span class="help-text">Safe to share. Identifies your messages to other members.</span>
+      </div>
+
+      <!-- Section: Private Identity -->
+      <div class="identity-section">
+        <div class="label-with-action">
+          <label class="section-label">Private Identity (Secret Key)</label>
+          <div class="action-btn-group">
+            <button type="button" id="toggle-secret-visibility-btn" class="text-link-btn">👁️ Reveal</button>
+            <button type="button" id="copy-my-privkey-btn" class="text-link-btn">📋 Copy Secret</button>
+          </div>
+        </div>
+        <input type="password" id="my-private-id-display" class="key-input-masked" readonly value="">
+        <span class="help-text warning-text">⚠️ Anyone with this Private Identity can impersonate you. Keep it secret.</span>
+      </div>
+
+      <!-- Section: Impersonate / Switch Identity -->
+      <div class="identity-section">
+        <label class="section-label">Impersonate / Switch Account</label>
+        <div class="input-wrapper">
+          <input type="text" id="switch-privkey-input" placeholder="Paste Private Identity (priv_... or hex)" autocomplete="off">
+          <button type="button" id="switch-privkey-btn" class="pill-btn secondary">Switch</button>
+        </div>
+        <span class="help-text">Paste a Private Identity to log in or impersonate that user.</span>
+      </div>
+
+      <div class="modal-divider"></div>
+
+      <div class="identity-footer-actions">
+        <button type="button" id="generate-new-id-btn" class="pill-btn danger-outline">Generate Fresh Identity</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Message Context Menu (Right Click) -->
+  <div id="message-context-menu" class="context-menu hidden">
+    <div class="context-menu-header">
+      <div class="avatar avatar-sm" id="ctx-avatar">?</div>
+      <div class="ctx-user-info">
+        <div class="ctx-username-line">
+          <span class="ctx-username" id="ctx-username">User</span>
+          <span class="ctx-you-tag hidden" id="ctx-you-tag">YOU</span>
+        </div>
+        <span class="ctx-id" id="ctx-user-id">pub_...</span>
+      </div>
+    </div>
+    <div class="context-menu-divider"></div>
+    <button class="context-menu-item" id="ctx-copy-id-btn">
+      <span class="ctx-icon">🔑</span>
+      <span>Copy Public Identity</span>
+    </button>
+    <button class="context-menu-item" id="ctx-pin-btn">
+      <span class="ctx-icon" id="ctx-pin-icon">📌</span>
+      <span id="ctx-pin-label">Pin Message</span>
+    </button>
+    <button class="context-menu-item" id="ctx-copy-text-btn">
+      <span class="ctx-icon">📋</span>
+      <span>Copy Message Text</span>
+    </button>
+  </div>
+
+  <!-- Scripts -->
+  <script src="p0_crypto.js"></script>
+  <script src="p2p_swarm.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

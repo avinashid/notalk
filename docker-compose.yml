@@ -1,0 +1,15 @@
+services:
+  protocol-zero-p2p:
+    build:
+      context: ..
+      dockerfile: web-p2p/Dockerfile
+    container_name: p0-p2p-chat
+    ports:
+      - "8081:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
