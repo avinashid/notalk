@@ -77,6 +77,9 @@ const el = {
 
   toggleSidebarBtn: document.getElementById('toggle-sidebar-btn'),
   closeSidebarBtn: document.getElementById('close-sidebar-btn'),
+  sidebarBackdrop: document.getElementById('sidebar-backdrop'),
+  roomHeaderClickable: document.getElementById('room-header-clickable'),
+  contextBackdrop: document.getElementById('context-backdrop'),
   appSidebar: document.getElementById('app-sidebar'),
   onlineCounter: document.getElementById('online-counter'),
   userSearch: document.getElementById('user-search'),
@@ -312,21 +315,36 @@ function initContextMenu() {
     openContextMenu(row._msgData, e.clientX, e.clientY);
   });
 
-  // Long-press detection for touch devices
+  // Long-press detection for mobile touch devices
   let touchTimer = null;
+  let startX = 0;
+  let startY = 0;
+
   el.messagesContainer.addEventListener('touchstart', (e) => {
     const row = e.target.closest('.message-row');
     if (!row || !row._msgData) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+
+    startX = touch.clientX;
+    startY = touch.clientY;
+
     touchTimer = setTimeout(() => {
-      const touch = e.touches[0];
-      if (touch) {
-        openContextMenu(row._msgData, touch.clientX, touch.clientY);
+      if (navigator.vibrate) {
+        try { navigator.vibrate(25); } catch (_) {}
       }
-    }, 500);
+      openContextMenu(row._msgData, startX, startY);
+    }, 450);
   }, { passive: true });
 
   el.messagesContainer.addEventListener('touchend', () => clearTimeout(touchTimer));
-  el.messagesContainer.addEventListener('touchmove', () => clearTimeout(touchTimer));
+  el.messagesContainer.addEventListener('touchcancel', () => clearTimeout(touchTimer));
+  el.messagesContainer.addEventListener('touchmove', (e) => {
+    const touch = e.touches[0];
+    if (touch && (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10)) {
+      clearTimeout(touchTimer);
+    }
+  }, { passive: true });
 
   // Context Menu Actions
   if (el.ctxCopyIdBtn) {
@@ -364,9 +382,14 @@ function initContextMenu() {
     });
   }
 
-  // Close context menu on document click or escape
+  // Close context menu on backdrop click, document click, or escape
+  if (el.contextBackdrop) {
+    el.contextBackdrop.addEventListener('click', closeContextMenu);
+    el.contextBackdrop.addEventListener('touchstart', closeContextMenu, { passive: true });
+  }
+
   document.addEventListener('click', (e) => {
-    if (el.messageContextMenu && !el.messageContextMenu.contains(e.target)) {
+    if (el.messageContextMenu && !el.messageContextMenu.contains(e.target) && !e.target.closest('.message-row')) {
       closeContextMenu();
     }
   });
@@ -378,7 +401,9 @@ function initContextMenu() {
     }
   });
 
-  window.addEventListener('resize', closeContextMenu);
+  window.addEventListener('resize', () => {
+    if (state.activeContextMsg) closeContextMenu();
+  });
 }
 
 function openContextMenu(msg, clientX, clientY) {
@@ -396,21 +421,43 @@ function openContextMenu(msg, clientX, clientY) {
   const isPinned = state.pinnedMessages.has(msg.id);
   el.ctxPinLabel.textContent = isPinned ? 'Unpin Message' : 'Pin Message';
 
+  const isMobile = window.innerWidth <= 640;
+
+  if (isMobile) {
+    if (el.contextBackdrop) {
+      el.contextBackdrop.classList.remove('hidden');
+      requestAnimationFrame(() => el.contextBackdrop.classList.add('active'));
+    }
+    el.messageContextMenu.style.left = '';
+    el.messageContextMenu.style.top = '';
+  } else {
+    if (el.contextBackdrop) {
+      el.contextBackdrop.classList.add('hidden');
+      el.contextBackdrop.classList.remove('active');
+    }
+    const menuWidth = 240;
+    const menuHeight = 175;
+    const posX = Math.min(clientX || 20, window.innerWidth - menuWidth - 12);
+    const posY = Math.min(clientY || 20, window.innerHeight - menuHeight - 12);
+
+    el.messageContextMenu.style.left = `${Math.max(10, posX)}px`;
+    el.messageContextMenu.style.top = `${Math.max(10, posY)}px`;
+  }
+
   el.messageContextMenu.classList.remove('hidden');
-
-  // Clamp within viewport
-  const menuWidth = 240;
-  const menuHeight = 175;
-  const posX = Math.min(clientX, window.innerWidth - menuWidth - 12);
-  const posY = Math.min(clientY, window.innerHeight - menuHeight - 12);
-
-  el.messageContextMenu.style.left = `${Math.max(10, posX)}px`;
-  el.messageContextMenu.style.top = `${Math.max(10, posY)}px`;
 }
 
 function closeContextMenu() {
   if (el.messageContextMenu) {
     el.messageContextMenu.classList.add('hidden');
+  }
+  if (el.contextBackdrop) {
+    el.contextBackdrop.classList.remove('active');
+    setTimeout(() => {
+      if (!state.activeContextMsg && el.contextBackdrop) {
+        el.contextBackdrop.classList.add('hidden');
+      }
+    }, 200);
   }
   state.activeContextMsg = null;
 }
@@ -716,15 +763,61 @@ function setupEventListeners() {
     });
   }
 
+  function openSidebar() {
+    if (el.appSidebar) el.appSidebar.classList.add('open');
+    if (el.sidebarBackdrop) {
+      el.sidebarBackdrop.classList.remove('hidden');
+      requestAnimationFrame(() => el.sidebarBackdrop.classList.add('active'));
+    }
+  }
+
+  function closeSidebar() {
+    if (el.appSidebar) el.appSidebar.classList.remove('open');
+    if (el.sidebarBackdrop) {
+      el.sidebarBackdrop.classList.remove('active');
+      setTimeout(() => {
+        if (el.sidebarBackdrop && !el.appSidebar.classList.contains('open')) {
+          el.sidebarBackdrop.classList.add('hidden');
+        }
+      }, 250);
+    }
+  }
+
   if (el.toggleSidebarBtn) {
     el.toggleSidebarBtn.addEventListener('click', () => {
-      el.appSidebar.classList.toggle('open');
+      if (el.appSidebar && el.appSidebar.classList.contains('open')) {
+        closeSidebar();
+      } else {
+        openSidebar();
+      }
+    });
+  }
+
+  if (el.roomHeaderClickable) {
+    el.roomHeaderClickable.addEventListener('click', () => {
+      if (window.innerWidth <= 768) {
+        openSidebar();
+      }
     });
   }
 
   if (el.closeSidebarBtn) {
-    el.closeSidebarBtn.addEventListener('click', () => {
-      el.appSidebar.classList.remove('open');
+    el.closeSidebarBtn.addEventListener('click', closeSidebar);
+  }
+
+  if (el.sidebarBackdrop) {
+    el.sidebarBackdrop.addEventListener('click', closeSidebar);
+    el.sidebarBackdrop.addEventListener('touchstart', closeSidebar, { passive: true });
+  }
+
+  // Smooth keyboard avoidance for iOS and Android
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      if (document.activeElement === el.messageInput) {
+        setTimeout(() => {
+          el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+        }, 120);
+      }
     });
   }
 

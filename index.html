@@ -2,7 +2,11 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a0d14">
   <title>Global Chat</title>
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -54,7 +58,7 @@
         <button id="toggle-sidebar-btn" class="icon-btn mobile-only" aria-label="Toggle Members List">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
         </button>
-        <div class="room-title-group">
+        <div class="room-title-group" id="room-header-clickable" title="View online members" role="button" tabindex="0">
           <div class="room-icon">#</div>
           <div>
             <h1 class="room-heading">Global Chat</h1>
@@ -131,6 +135,9 @@
 
     <!-- Main Container -->
     <div class="app-body">
+      <!-- Members Sidebar Backdrop for Mobile -->
+      <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+
       <!-- Members Sidebar -->
       <aside class="app-sidebar" id="app-sidebar">
         <div class="sidebar-header">
@@ -186,9 +193,10 @@
               <input 
                 type="text" 
                 id="message-input" 
-                placeholder="Write a message... (Press Enter to send)" 
+                placeholder="Message..." 
                 maxlength="1000" 
                 autocomplete="off"
+                enterkeyhint="send"
               >
               <button type="submit" id="send-btn" class="send-btn" aria-label="Send message">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -267,8 +275,10 @@
     </div>
   </div>
 
-  <!-- Message Context Menu (Right Click) -->
+  <!-- Message Context Menu (Right Click & Mobile Action Sheet) -->
+  <div id="context-backdrop" class="context-backdrop hidden"></div>
   <div id="message-context-menu" class="context-menu hidden">
+    <div class="bottom-sheet-handle mobile-only"></div>
     <div class="context-menu-header">
       <div class="avatar avatar-sm" id="ctx-avatar">?</div>
       <div class="ctx-user-info">
