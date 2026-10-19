@@ -1,11 +1,11 @@
 /**
- * NoTalk Encrypted Messenger Controller (v4.0)
+ * NoTalk Encrypted Messenger Controller (v5.0 Extreme Edition)
  * - Consumer-friendly UI (zero technical/developer jargon)
- * - Real-time sharing of Photos, Videos, Audio, Live Voice Notes, Documents & Emojis
+ * - 60-120 FPS `requestAnimationFrame` Batched DOM Commit Pipeline (`DocumentFragment`)
+ * - 16 KB Binary Streaming Media & File Transfers up to 500 MB+ with live progress bars & OPFS storage
+ * - Opus 24 kbps Voice Note encoding (`audio/webm;codecs=opus`) with synthesized WAV fallback
  * - High-contrast Dark / Light / Slate / Frost theme switcher
  * - Strict live online user directory (never lists fake, demo, ghost, or self entries)
- * - Mobile-first responsive experience with VisualViewport adaptation & touch long-press
- * - Spring pop animations on incoming/outgoing messages & emoji reactions
  */
 
 const MAX_DOM_MESSAGES = 250;
@@ -34,10 +34,12 @@ const state = {
   onlineUsers: [],
   pinnedMessages: new Map(),
   renderedMsgIds: new Set(),
+  domCommitQueue: [],
+  rafCommitId: null,
   activeContextMsg: null,
   replyingToMsg: null,
   pendingGroupInvite: null,
-  pendingAttachments: [], // Array<{ id, kind: 'image'|'video'|'audio'|'voice'|'file', name, mime, size, dataUrl, duration }>
+  pendingAttachments: [],
   isTyping: false,
   typingTimeout: null,
   remoteTypers: new Map(),
@@ -160,7 +162,7 @@ function bindElements() {
 
 const RANDOM_NAMES = [
   'Alex', 'Jordan', 'Taylor', 'Morgan', 'Casey', 'Riley', 'Avery',
-  'Quinn', 'Harper', 'Rowan', 'Dakota', 'Skyler', 'Cameron', 'logan'
+  'Quinn', 'Harper', 'Rowan', 'Dakota', 'Skyler', 'Cameron', 'Logan'
 ];
 
 function getRandomUsername() {
@@ -446,10 +448,10 @@ function triggerPushNotification({ title, body, badgeText = 'New Message', convI
 }
 
 // ============================================================================
-// Rich Media, File, Photo, Video & Live Voice Note Handling
+// Rich Media, File, Photo, Video, OPFS Binary Blobs & Opus Voice Notes
 // ============================================================================
 
-function compressImageFile(file, maxDim = 1100, quality = 0.82) {
+function compressImageFile(file, maxDim = 1280, quality = 0.84) {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -489,29 +491,49 @@ function compressImageFile(file, maxDim = 1100, quality = 0.82) {
   });
 }
 
-function readRawFileAsAttachment(file, forcedKind = null) {
-  return new Promise((resolve) => {
-    if (file.size > 15 * 1024 * 1024) {
-      showToast('File is larger than 15 MB limit');
-      return resolve(null);
+async function readRawFileAsAttachment(file, forcedKind = null) {
+  if (file.size > 1024 * 1024 * 1024) {
+    showToast('File exceeds 1 GB streaming limit');
+    return null;
+  }
+  const mime = file.type || 'application/octet-stream';
+  let kind = forcedKind;
+  if (!kind) {
+    if (mime.startsWith('image/')) kind = 'image';
+    else if (mime.startsWith('video/')) kind = 'video';
+    else if (mime.startsWith('audio/')) kind = 'audio';
+    else kind = 'file';
+  }
+  const attId = 'att_' + Math.random().toString(36).slice(2, 9);
+
+  // For large files (> 192 KB), use zero-copy OPFS / ObjectURL + 16 KB binary chunked streaming
+  if (file.size > 196608) {
+    let objUrl = URL.createObjectURL(file);
+    if (window.chatStorage && typeof window.chatStorage.storeBinaryAttachment === 'function') {
+      objUrl = await window.chatStorage.storeBinaryAttachment(attId, file, mime);
     }
+    return {
+      id: attId,
+      kind,
+      name: file.name || 'attachment',
+      mime,
+      size: file.size,
+      dataUrl: objUrl,
+      rawBlob: file,
+    };
+  }
+
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      const mime = file.type || 'application/octet-stream';
-      let kind = forcedKind;
-      if (!kind) {
-        if (mime.startsWith('image/')) kind = 'image';
-        else if (mime.startsWith('video/')) kind = 'video';
-        else if (mime.startsWith('audio/')) kind = 'audio';
-        else kind = 'file';
-      }
       resolve({
-        id: 'att_' + Math.random().toString(36).slice(2, 9),
+        id: attId,
         kind,
         name: file.name || 'attachment',
         mime,
         size: file.size,
         dataUrl: e.target.result,
+        rawBlob: file,
       });
     };
     reader.onerror = () => resolve(null);
@@ -523,7 +545,7 @@ async function handleSelectedFiles(fileList, forcedKind = null) {
   if (!fileList || fileList.length === 0) return;
   for (const file of Array.from(fileList)) {
     let att = null;
-    if ((forcedKind === 'image' || (file.type && file.type.startsWith('image/'))) && file.type !== 'image/gif') {
+    if ((forcedKind === 'image' || (file.type && file.type.startsWith('image/'))) && file.type !== 'image/gif' && file.size < 8 * 1024 * 1024) {
       att = await compressImageFile(file);
     } else {
       att = await readRawFileAsAttachment(file, forcedKind);
@@ -573,7 +595,6 @@ function renderPendingAttachmentsBar() {
   });
 }
 
-// Synthesized WAV fallback if microphone hardware is unavailable in sandbox
 function createSynthesizedVoiceNoteDataUrl(durationSec = 2) {
   const sampleRate = 16000;
   const numSamples = Math.max(1, Math.min(durationSec, 8)) * sampleRate;
@@ -634,15 +655,18 @@ async function startVoiceRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       state.voiceRecorder.stream = stream;
-      const mr = new MediaRecorder(stream);
+      const opusMime = (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
+        ? 'audio/webm;codecs=opus'
+        : undefined;
+      const mr = opusMime
+        ? new MediaRecorder(stream, { mimeType: opusMime, audioBitsPerSecond: 24000 })
+        : new MediaRecorder(stream);
       state.voiceRecorder.mediaRecorder = mr;
       mr.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) state.voiceRecorder.chunks.push(e.data);
       };
       mr.start();
-    } catch (_) {
-      // Uses synthesized voice note buffer on finish if mic permission is blocked
-    }
+    } catch (_) {}
   }
 }
 
@@ -680,7 +704,7 @@ function stopVoiceRecording(shouldSend = true) {
       }
       if (!shouldSend) return;
       if (state.voiceRecorder.chunks.length > 0) {
-        const blob = new Blob(state.voiceRecorder.chunks, { type: mr.mimeType || 'audio/webm' });
+        const blob = new Blob(state.voiceRecorder.chunks, { type: mr.mimeType || 'audio/webm;codecs=opus' });
         const reader = new FileReader();
         reader.onload = (e) => finalizeAndSend(e.target.result, blob.type);
         reader.readAsDataURL(blob);
@@ -911,7 +935,6 @@ function getNormalizedOnlineUsers() {
   state.onlineUsers.forEach((u) => {
     if (u && u.pubkey) {
       const clean = P0Crypto.normalizePubkey(u.pubkey);
-      // Never include self or stale entries
       if (clean && clean !== myPub && (now - (u.lastSeen || 0)) < 35000) {
         map.set(clean, {
           username: (u.username || 'user').replace(/^@/, ''),
@@ -1182,8 +1205,50 @@ function updateInfoDrawerContent() {
 }
 
 // ============================================================================
-// Message Processing, Reactions, Media Rendering & Pop-In Animations
+// Message Processing, Reactions, `requestAnimationFrame` Batched DOM Commits
 // ============================================================================
+
+function queueMessageForDomCommit(msg) {
+  state.domCommitQueue.push(msg);
+  if (!state.rafCommitId) {
+    state.rafCommitId = requestAnimationFrame(() => flushDomCommitQueue());
+  }
+}
+
+function flushDomCommitQueue() {
+  state.rafCommitId = null;
+  if (!el.messagesContainer || state.domCommitQueue.length === 0) return;
+
+  const batch = state.domCommitQueue.splice(0, state.domCommitQueue.length);
+  const frag = document.createDocumentFragment();
+  let appendedCount = 0;
+
+  for (let i = 0; i < batch.length; i++) {
+    const msg = batch[i];
+    if ((msg.convId || 'global') !== state.activeConvId) continue;
+    const row = buildMessageRowDom(msg, batch.length <= 8);
+    if (row) {
+      frag.appendChild(row);
+      appendedCount++;
+    }
+  }
+
+  if (appendedCount > 0) {
+    el.messagesContainer.appendChild(frag);
+    const existingRows = el.messagesContainer.querySelectorAll('.message-row');
+    if (existingRows.length > MAX_DOM_MESSAGES) {
+      const excess = existingRows.length - MAX_DOM_MESSAGES;
+      for (let i = 0; i < excess; i++) {
+        const oldest = existingRows[i];
+        if (oldest && oldest._msgData) {
+          state.renderedMsgIds.delete(oldest._msgData.id);
+        }
+        if (oldest) oldest.remove();
+      }
+    }
+    scrollToBottom();
+  }
+}
 
 async function handleIncomingMessage(rawMsg) {
   if (!rawMsg || !rawMsg.id) return;
@@ -1260,7 +1325,7 @@ async function handleIncomingMessage(rawMsg) {
   renderConversationList();
 
   if (convId === state.activeConvId) {
-    appendMessageRowToDom(msg, true, true);
+    queueMessageForDomCommit(msg);
   }
 
   if (senderPub !== myPub && !muted) {
@@ -1278,6 +1343,33 @@ async function handleIncomingMessage(rawMsg) {
       playNotificationChime();
     }
   }
+}
+
+function handleTransferProgress(info) {
+  if (!info || !info.transferId) return;
+  const barEl = document.getElementById(`transfer-bar-${info.transferId}`);
+  const labelEl = document.getElementById(`transfer-lbl-${info.transferId}`);
+  const wrapEl = document.getElementById(`transfer-wrap-${info.transferId}`);
+  if (wrapEl) wrapEl.classList.remove('hidden');
+  if (barEl) barEl.style.width = `${info.percent}%`;
+  if (labelEl) {
+    const verb = info.direction === 'send' ? 'Sending' : 'Receiving';
+    labelEl.textContent = info.percent >= 100 ? 'Complete ✓' : `${verb}... ${info.percent}%`;
+  }
+}
+
+function handleTransferComplete(info) {
+  if (!info || !info.transferId || !info.objectUrl) return;
+  const wrapEl = document.getElementById(`transfer-wrap-${info.transferId}`);
+  if (wrapEl) wrapEl.classList.add('hidden');
+
+  document.querySelectorAll(`[data-transfer-id="${info.transferId}"]`).forEach((node) => {
+    if (node.tagName === 'IMG' || node.tagName === 'VIDEO' || node.tagName === 'AUDIO') {
+      node.src = info.objectUrl;
+    } else if (node.tagName === 'A') {
+      node.href = info.objectUrl;
+    }
+  });
 }
 
 function handleIncomingReaction(pkt) {
@@ -1339,6 +1431,7 @@ function renderMessagesForActiveConversation() {
   if (!el.messagesContainer) return;
   el.messagesContainer.innerHTML = '';
   state.renderedMsgIds.clear();
+  state.domCommitQueue = [];
 
   const conv = state.conversations.get(state.activeConvId) || state.conversations.get('global');
   const notice = document.createElement('div');
@@ -1354,29 +1447,49 @@ function renderMessagesForActiveConversation() {
 
   const list = state.messagesByConv.get(state.activeConvId) || [];
   const windowSlice = list.slice(-MAX_DOM_MESSAGES);
-  windowSlice.forEach(msg => appendMessageRowToDom(msg, false, false));
+  const frag = document.createDocumentFragment();
+  windowSlice.forEach((msg) => {
+    const row = buildMessageRowDom(msg, false);
+    if (row) frag.appendChild(row);
+  });
+  el.messagesContainer.appendChild(frag);
   scrollToBottom();
 }
 
 function renderAttachmentHtml(att) {
-  if (!att || !att.dataUrl) return '';
+  if (!att) return '';
   const safeName = escapeHtml(att.name || 'file');
   const sizeStr = formatBytes(att.size || 0);
+  const trId = att.transferId || '';
+  const trAttr = trId ? `data-transfer-id="${escapeHtml(trId)}"` : '';
+  const progressHtml = trId ? `
+    <div id="transfer-wrap-${escapeHtml(trId)}" class="wa-transfer-progress ${att.dataUrl ? 'hidden' : ''}">
+      <div class="wa-transfer-top">
+        <span>${safeName}</span>
+        <span id="transfer-lbl-${escapeHtml(trId)}">Streaming...</span>
+      </div>
+      <div class="wa-transfer-track">
+        <div id="transfer-bar-${escapeHtml(trId)}" class="wa-transfer-fill" style="width:0%;"></div>
+      </div>
+    </div>
+  ` : '';
 
   if (att.kind === 'image') {
     return `
       <div class="wa-media-wrap">
-        <img class="wa-media-img" src="${att.dataUrl}" alt="${safeName}" data-filename="${safeName}">
+        <img class="wa-media-img" decoding="async" loading="lazy" ${trAttr} src="${att.dataUrl || ''}" alt="${safeName}" data-filename="${safeName}">
+        ${progressHtml}
       </div>
     `;
   }
   if (att.kind === 'video') {
     return `
       <div class="wa-media-wrap">
-        <video class="wa-media-video" controls playsinline preload="metadata" src="${att.dataUrl}"></video>
+        <video class="wa-media-video" ${trAttr} controls playsinline preload="metadata" src="${att.dataUrl || ''}"></video>
+        ${progressHtml}
         <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.7rem; color:var(--text-muted);">
           <span>🎬 ${safeName} (${sizeStr})</span>
-          <a href="${att.dataUrl}" download="${safeName}" style="color:var(--accent-primary); font-weight:700; text-decoration:none;">Download</a>
+          <a ${trAttr} href="${att.dataUrl || '#'}" download="${safeName}" style="color:var(--accent-primary); font-weight:700; text-decoration:none;">Download</a>
         </div>
       </div>
     `;
@@ -1390,7 +1503,8 @@ function renderAttachmentHtml(att) {
             <span>${icon} ${safeName}</span>
             <span style="color:var(--text-muted); font-size:0.66rem;">${sizeStr}</span>
           </div>
-          <audio class="wa-media-audio-player" controls preload="metadata" src="${att.dataUrl}"></audio>
+          <audio class="wa-media-audio-player" ${trAttr} controls preload="metadata" src="${att.dataUrl || ''}"></audio>
+          ${progressHtml}
         </div>
       </div>
     `;
@@ -1405,25 +1519,17 @@ function renderAttachmentHtml(att) {
           <div class="wa-file-name">${safeName}</div>
           <div class="wa-file-size">${sizeStr}</div>
         </div>
-        <a class="wa-file-dl-btn" href="${att.dataUrl}" download="${safeName}">Save</a>
+        <a class="wa-file-dl-btn" ${trAttr} href="${att.dataUrl || '#'}" download="${safeName}">Save</a>
       </div>
+      ${progressHtml}
     </div>
   `;
 }
 
-function appendMessageRowToDom(msg, autoScroll = true, animatePop = true) {
-  if (!el.messagesContainer || !msg || !msg.id) return;
-  if (state.renderedMsgIds.has(msg.id)) return;
+function buildMessageRowDom(msg, animatePop = true) {
+  if (!msg || !msg.id) return null;
+  if (state.renderedMsgIds.has(msg.id)) return null;
   state.renderedMsgIds.add(msg.id);
-
-  const existingRows = el.messagesContainer.querySelectorAll('.message-row');
-  if (existingRows.length >= MAX_DOM_MESSAGES) {
-    const oldest = existingRows[0];
-    if (oldest && oldest._msgData) {
-      state.renderedMsgIds.delete(oldest._msgData.id);
-    }
-    if (oldest) oldest.remove();
-  }
 
   if (msg.pinned) {
     state.pinnedMessages.set(msg.id, msg);
@@ -1493,15 +1599,14 @@ function appendMessageRowToDom(msg, autoScroll = true, animatePop = true) {
 
   renderReactionsInsideRow(row, msg);
 
-  // Image Lightbox click handler
   row.querySelectorAll('.wa-media-img').forEach((imgEl) => {
+    if (typeof imgEl.decode === 'function' && imgEl.src) { imgEl.decode().catch(() => {}); }
     imgEl.addEventListener('click', (e) => {
       e.stopPropagation();
       openMediaLightbox(imgEl.src, imgEl.getAttribute('data-filename') || 'photo.jpg');
     });
   });
 
-  // Mobile Touch Long-Press Support for Context & Reaction Menu
   let touchTimer = null;
   const bubbleEl = row.querySelector('.wa-bubble');
   if (bubbleEl) {
@@ -1542,6 +1647,13 @@ function appendMessageRowToDom(msg, autoScroll = true, animatePop = true) {
     });
   }
 
+  return row;
+}
+
+function appendMessageRowToDom(msg, autoScroll = true, animatePop = true) {
+  if (!el.messagesContainer) return;
+  const row = buildMessageRowDom(msg, animatePop);
+  if (!row) return;
   el.messagesContainer.appendChild(row);
   if (autoScroll) scrollToBottom();
 }
@@ -1881,7 +1993,6 @@ function setupEventListeners() {
     });
   }
 
-  // Filter Pills
   el.filterPills.forEach((pill) => {
     pill.addEventListener('click', () => {
       el.filterPills.forEach(p => p.classList.remove('active'));
@@ -1912,7 +2023,6 @@ function setupEventListeners() {
     });
   }
 
-  // Push Notification & Mute Center
   if (el.notifBtn) {
     el.notifBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1987,7 +2097,6 @@ function setupEventListeners() {
     });
   }
 
-  // Theme Selector (Dark / Light Quick Switch + 4 Palettes)
   if (el.themeBtn) {
     el.themeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2017,7 +2126,6 @@ function setupEventListeners() {
     });
   });
 
-  // Retention Settings
   if (el.settingsBtn) {
     el.settingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2049,7 +2157,6 @@ function setupEventListeners() {
     });
   }
 
-  // Media & File Attachment Popover & File Inputs
   if (el.toggleAttachBtn) {
     el.toggleAttachBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2107,7 +2214,6 @@ function setupEventListeners() {
     });
   }
 
-  // Drag & Drop and Clipboard Paste for Media/Files
   if (el.mainChatArea) {
     el.mainChatArea.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -2125,7 +2231,6 @@ function setupEventListeners() {
     }
   });
 
-  // Live Voice Note Recorder
   if (el.voiceRecordBtn) {
     el.voiceRecordBtn.addEventListener('click', () => {
       if (state.voiceRecorder.active) {
@@ -2142,7 +2247,6 @@ function setupEventListeners() {
     el.sendVoiceBtn.addEventListener('click', () => stopVoiceRecording(true));
   }
 
-  // Lightbox Close
   if (el.lightboxCloseBtn) {
     el.lightboxCloseBtn.addEventListener('click', () => el.mediaLightbox.classList.add('hidden'));
   }
@@ -2152,7 +2256,6 @@ function setupEventListeners() {
     });
   }
 
-  // Emoji Picker & Categories
   if (el.toggleEmojiBtn) {
     el.toggleEmojiBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2175,7 +2278,6 @@ function setupEventListeners() {
     });
   });
 
-  // Modals: Create Group, Join Group, New DM, Identity
   if (el.openCreateGroupBtn) {
     el.openCreateGroupBtn.addEventListener('click', () => openCreateGroupModal());
   }
@@ -2371,7 +2473,6 @@ function setupEventListeners() {
     });
   }
 
-  // Identity Modal Actions
   if (el.currentUserPill) {
     el.currentUserPill.addEventListener('click', openIdentityModal);
   }
@@ -2449,7 +2550,6 @@ function setupEventListeners() {
     });
   }
 
-  // Pinned Banner & Reply Bar
   if (el.pinnedBanner) {
     el.pinnedBanner.addEventListener('click', (e) => {
       if (e.target.closest('#unpin-current-btn')) return;
@@ -2478,7 +2578,6 @@ function setupEventListeners() {
     el.cancelReplyBtn.addEventListener('click', cancelReply);
   }
 
-  // Typing & Send Message Form (Text + Rich Attachments)
   if (el.messageInput) {
     el.messageInput.addEventListener('input', () => {
       if (!state.isTyping) {
@@ -2521,7 +2620,6 @@ function setupEventListeners() {
     });
   }
 
-  // Context Menu & Quick Reactions
   if (el.messagesContainer) {
     el.messagesContainer.addEventListener('contextmenu', (e) => {
       const row = e.target.closest('.message-row');
@@ -2672,12 +2770,17 @@ function initSwarm(username) {
     room: 'global',
     username,
     identity: state.identity,
-    maxNeighbors: 12,
     onMessage: (msg) => {
       handleIncomingMessage(msg);
     },
     onReaction: (pkt) => {
       handleIncomingReaction(pkt);
+    },
+    onTransferProgress: (info) => {
+      handleTransferProgress(info);
+    },
+    onTransferComplete: (info) => {
+      handleTransferComplete(info);
     },
     onUserJoined: () => {
       updateActiveChatHeader();
