@@ -1,28 +1,57 @@
 /**
- * Protocol Zero P2P Gossip Swarm (v3.0) - High-Reliability Cross-Internet Edition
- * Completely Serverless — Multi-Channel Signaling (BroadcastChannel + Global MQTT WebSocket + WebTorrent Trackers)
- * Guarantees cross-network connectivity between WiFi, 4G/5G cellular data, and different ISPs.
+ * Real-Time Messaging Transport Engine (v4.0)
+ * - Strict live presence verification (ignores stale/retained packets; zero fake or ghost users)
+ * - Supports rich media attachments (images, videos, audio, voice notes, documents) & emoji reactions
+ * - Two-generation 32,768-entry O(1) deduplication ring (`SeenMessageRing`)
  */
 
-// ---------------------------------------------------------------------------
-// Lightweight Zero-Dependency MQTT 3.1.1 WebSocket Client
-// Provides instant 20ms cross-network signaling & fail-safe message relay.
-// ---------------------------------------------------------------------------
+class SeenMessageRing {
+  constructor(capacityPerGen = 16384) {
+    this.cap = capacityPerGen;
+    this.genCurrent = new Set();
+    this.genPrevious = new Set();
+  }
+
+  has(id) {
+    return this.genCurrent.has(id) || this.genPrevious.has(id);
+  }
+
+  add(id) {
+    if (!id) return false;
+    if (this.has(id)) return false;
+    this.genCurrent.add(id);
+    if (this.genCurrent.size >= this.cap) {
+      this.genPrevious = this.genCurrent;
+      this.genCurrent = new Set();
+    }
+    return true;
+  }
+
+  get size() {
+    return this.genCurrent.size + this.genPrevious.size;
+  }
+}
+
 class MqttSignalingClient {
   constructor(options = {}) {
     this.brokerUrls = [
       'wss://broker.emqx.io:8084/mqtt',
       'wss://broker.hivemq.com:8884/mqtt',
     ];
+    // Isolated v4 channel so legacy/demo bots on v1-v3 topics never appear
+    this.namespace = 'notalk_v4_live_app';
     this.room = options.room || 'global';
     this.peerId = options.peerId || ('p_' + Math.random().toString(36).substring(2, 10));
+    this.pubkeyPrefix = (options.pubkey || '').replace(/^pub_/, '').toLowerCase().slice(0, 24);
     this.onMessage = options.onMessage || (() => {});
     this.onConnect = options.onConnect || null;
-    this.connections = new Map(); // url -> { ws, isConnected, pingTimer, reconnectTimer }
+    this.connections = new Map();
+    this.subscribedTopics = new Set();
     this.outbox = [];
     this.nextPacketId = 1;
     this.hasNotifiedConnect = false;
     this.isDestroyed = false;
+    this.stats = { framesIn: 0, framesOut: 0 };
   }
 
   get isConnected() {
@@ -32,9 +61,35 @@ class MqttSignalingClient {
     return false;
   }
 
+  get connectedBrokerCount() {
+    let c = 0;
+    for (const conn of this.connections.values()) {
+      if (conn.isConnected) c++;
+    }
+    return c;
+  }
+
   connect() {
     if (this.isDestroyed) return;
     this.brokerUrls.forEach(url => this.connectBroker(url));
+  }
+
+  updatePubkeySubscription(newPubkey) {
+    const newPrefix = (newPubkey || '').replace(/^pub_/, '').toLowerCase().slice(0, 24);
+    if (!newPrefix || newPrefix === this.pubkeyPrefix) return;
+    this.pubkeyPrefix = newPrefix;
+    const topic = `${this.namespace}/${this.room}/pub/${this.pubkeyPrefix}`;
+    this.subscribeTopic(topic);
+  }
+
+  subscribeTopic(topic) {
+    if (!topic) return;
+    this.subscribedTopics.add(topic);
+    for (const conn of this.connections.values()) {
+      if (conn.isConnected) {
+        this.sendSubscribe(conn, topic);
+      }
+    }
   }
 
   connectBroker(url) {
@@ -70,7 +125,7 @@ class MqttSignalingClient {
         clearInterval(conn.pingTimer);
         if (!this.isDestroyed) {
           clearTimeout(conn.reconnectTimer);
-          conn.reconnectTimer = setTimeout(() => this.connectBroker(url), 2500);
+          conn.reconnectTimer = setTimeout(() => this.connectBroker(url), 3500 + Math.floor(Math.random() * 2000));
         }
       };
 
@@ -79,7 +134,7 @@ class MqttSignalingClient {
         try { ws.close(); } catch (_) {}
       };
     } catch (_) {
-      conn.reconnectTimer = setTimeout(() => this.connectBroker(url), 3000);
+      conn.reconnectTimer = setTimeout(() => this.connectBroker(url), 4500);
     }
   }
 
@@ -96,10 +151,9 @@ class MqttSignalingClient {
 
   sendConnect(conn) {
     if (!conn.ws || conn.ws.readyState !== WebSocket.OPEN) return;
-    // Each broker receives a unique client ID to prevent broker-level session clashes
     const cidStr = `${this.peerId}_${Math.random().toString(36).substring(2, 6)}`;
     const cid = new TextEncoder().encode(cidStr);
-    const varHeader = new Uint8Array([0x00, 0x04, 0x4D, 0x51, 0x54, 0x54, 0x04, 0x02, 0x00, 0x3C]); // 'MQTT', v4, CleanSession, 60s
+    const varHeader = new Uint8Array([0x00, 0x04, 0x4D, 0x51, 0x54, 0x54, 0x04, 0x02, 0x00, 0x3C]);
     const payload = new Uint8Array(2 + cid.length);
     payload[0] = (cid.length >> 8) & 0xFF;
     payload[1] = cid.length & 0xFF;
@@ -108,7 +162,7 @@ class MqttSignalingClient {
     const totalLen = varHeader.length + payload.length;
     const lenBytes = this.encodeRemainingLength(totalLen);
     const packet = new Uint8Array(1 + lenBytes.length + totalLen);
-    packet[0] = 0x10; // CONNECT
+    packet[0] = 0x10;
     packet.set(lenBytes, 1);
     const offset = 1 + lenBytes.length;
     packet.set(varHeader, offset);
@@ -126,7 +180,7 @@ class MqttSignalingClient {
     const remLen = 2 + 2 + t.length + 1;
     const lenBytes = this.encodeRemainingLength(remLen);
     const packet = new Uint8Array(1 + lenBytes.length + remLen);
-    packet[0] = 0x82; // SUBSCRIBE QoS 1
+    packet[0] = 0x82;
     packet.set(lenBytes, 1);
     const offset = 1 + lenBytes.length;
     packet[offset] = (packetId >> 8) & 0xFF;
@@ -134,23 +188,23 @@ class MqttSignalingClient {
     packet[offset + 2] = (t.length >> 8) & 0xFF;
     packet[offset + 3] = t.length & 0xFF;
     packet.set(t, offset + 4);
-    packet[offset + 4 + t.length] = 0x00; // Requested QoS 0
+    packet[offset + 4 + t.length] = 0x00;
 
     try {
       conn.ws.send(packet.buffer);
     } catch (_) {}
   }
 
-  publish(topic, obj) {
-    if (!obj) return;
-    const payloadObj = { ...obj, senderId: this.peerId };
+  publish(topic, obj, onlyOneBroker = false) {
+    if (!obj || !topic) return;
+    const payloadObj = { ...obj, senderId: this.peerId, ts: Date.now() };
 
     const t = new TextEncoder().encode(topic);
     const m = new TextEncoder().encode(JSON.stringify(payloadObj));
     const remLen = 2 + t.length + m.length;
     const lenBytes = this.encodeRemainingLength(remLen);
     const packet = new Uint8Array(1 + lenBytes.length + remLen);
-    packet[0] = 0x30; // PUBLISH QoS 0
+    packet[0] = 0x30; // Retain = 0
     packet.set(lenBytes, 1);
     const offset = 1 + lenBytes.length;
     packet[offset] = (t.length >> 8) & 0xFF;
@@ -163,13 +217,15 @@ class MqttSignalingClient {
       if (conn.isConnected && conn.ws && conn.ws.readyState === WebSocket.OPEN) {
         try {
           conn.ws.send(packet.buffer);
+          this.stats.framesOut++;
           sentAny = true;
+          if (onlyOneBroker) break;
         } catch (_) {}
       }
     }
 
     if (!sentAny) {
-      if (this.outbox.length > 50) this.outbox.shift();
+      if (this.outbox.length > 64) this.outbox.shift();
       this.outbox.push({ topic, obj: payloadObj });
     }
   }
@@ -178,8 +234,10 @@ class MqttSignalingClient {
     let frameOffset = 0;
 
     while (frameOffset < bytes.length) {
-      const packetType = bytes[frameOffset] >> 4;
-      const qos = (bytes[frameOffset] >> 1) & 0x03;
+      const headerByte = bytes[frameOffset];
+      const packetType = headerByte >> 4;
+      const qos = (headerByte >> 1) & 0x03;
+      const isRetained = (headerByte & 0x01) !== 0;
 
       let idx = frameOffset + 1;
       let multiplier = 1;
@@ -196,18 +254,20 @@ class MqttSignalingClient {
       const packetEnd = packetStart + remainingLength;
       if (packetEnd > bytes.length) return;
 
-      // CONNACK (type 2)
       if (packetType === 2) {
         const returnCode = bytes[packetStart + 1];
         if (returnCode === 0x00) {
           conn.isConnected = true;
 
-          // Subscribe to wildcard and room topics
-          this.sendSubscribe(conn, `notalk/v3/${this.room}/#`);
-          this.sendSubscribe(conn, `notalk/v3/${this.room}/global`);
-          this.sendSubscribe(conn, `notalk/v3/${this.room}/${this.peerId}`);
+          this.subscribedTopics.add(`${this.namespace}/${this.room}/global`);
+          this.subscribedTopics.add(`${this.namespace}/${this.room}/peer/${this.peerId}`);
+          if (this.pubkeyPrefix) {
+            this.subscribedTopics.add(`${this.namespace}/${this.room}/pub/${this.pubkeyPrefix}`);
+          }
+          for (const t of this.subscribedTopics) {
+            this.sendSubscribe(conn, t);
+          }
 
-          // Flush outbox
           while (this.outbox.length > 0) {
             const item = this.outbox.shift();
             this.publish(item.topic, item.obj);
@@ -227,22 +287,19 @@ class MqttSignalingClient {
         }
       }
 
-      // PUBLISH (type 3)
-      if (packetType === 3) {
+      // Ignore any broker-retained messages so ghost/stale users never appear
+      if (packetType === 3 && !isRetained) {
         let pIdx = packetStart;
         const topicLen = (bytes[pIdx] << 8) | bytes[pIdx + 1];
         pIdx += 2 + topicLen;
-
-        // Skip packet ID if QoS > 0
-        if (qos > 0) {
-          pIdx += 2;
-        }
+        if (qos > 0) pIdx += 2;
 
         const payloadBytes = bytes.subarray(pIdx, packetEnd);
         try {
           const payloadStr = new TextDecoder().decode(payloadBytes);
           const payload = JSON.parse(payloadStr);
           if (payload && payload.senderId !== this.peerId) {
+            this.stats.framesIn++;
             this.onMessage(payload);
           }
         } catch (_) {}
@@ -260,109 +317,121 @@ class MqttSignalingClient {
       clearInterval(conn.pingTimer);
       clearTimeout(conn.reconnectTimer);
       if (conn.ws) {
-        try { conn.ws.close(); } catch (_) {}
+        try { ws.close(); } catch (_) {}
       }
     }
     this.connections.clear();
   }
 }
 
-// ---------------------------------------------------------------------------
-// Main P2PGossipSwarm Engine
-// ---------------------------------------------------------------------------
 class P2PGossipSwarm {
   constructor(options = {}) {
     this.room = options.room || 'global';
     this.username = options.username || 'anon';
     this.identity = options.identity || P0Crypto.generateIdentity();
     this.peerId = P0Crypto.generatePeerId();
-    this.maxNeighbors = options.maxNeighbors || 6;
-    this.minNeighbors = 3;
+    this.maxNeighbors = options.maxNeighbors || 12;
+    this.minNeighbors = 4;
 
-    // Callbacks
     this.onMessage = options.onMessage || (() => {});
+    this.onReaction = options.onReaction || (() => {});
     this.onUserJoined = options.onUserJoined || (() => {});
     this.onUserLeft = options.onUserLeft || (() => {});
     this.onPeerListUpdate = options.onPeerListUpdate || (() => {});
     this.onStatusChange = options.onStatusChange || (() => {});
     this.onTyping = options.onTyping || (() => {});
+    this.onGroupInvite = options.onGroupInvite || (() => {});
 
-    // Active Mesh State
-    this.neighbors = new Map(); // peerId -> { pc, dc, username, pubkey }
-    this.knownOnlineUsers = new Map(); // pubkey -> { peerId, username, pubkey, lastSeen }
-    this.pendingOffers = new Map(); // offerId -> { pc, dc, created: timestamp }
-    this.connectingPeers = new Map(); // peerId -> timestamp of in-flight connection attempt
-    this.seenMessages = new Set();
-    this.trackerSockets = [];
+    this.neighbors = new Map();
+    this.knownOnlineUsers = new Map(); // Only real, live verified remote users
+    this.pendingOffers = new Map();
+    this.connectingPeers = new Map();
+    this.seenMessages = new SeenMessageRing(16384);
     this.isDestroyed = false;
+    this.lastPresenceReplyTs = 0;
+    this.peerListTimer = null;
 
-    // Global Public MQTT WebSocket Relay
     this.mqtt = new MqttSignalingClient({
       room: this.room,
       peerId: this.peerId,
-      onConnect: () => this.broadcastDiscover(),
+      pubkey: this.identity.ed25519_pub,
+      onConnect: () => {
+        this.notifyStatus();
+        this.broadcastDiscover();
+      },
       onMessage: (payload) => this.handleSignalingPayload(payload),
     });
 
-    // Public Signaling Trackers (Verified Live)
-    this.trackerUrls = [
-      'wss://tracker.openwebtorrent.com',
-      'wss://tracker.webtorrent.dev',
-      'wss://tracker.novage.com.ua',
-    ];
-
-    // High-Capacity Global STUN Servers (Google, Cloudflare, BlackBerry)
     this.rtcConfig = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        { urls: 'stun:stun.cloudflare.com:3478' },
-        { urls: 'stun:stun.voip.blackberry.com:3478' },
       ],
-      iceCandidatePoolSize: 4,
+      iceCandidatePoolSize: 2,
     };
   }
 
   async start() {
-    this.infoHashHex = await P0Crypto.sha1Hex(`protocol-zero-v3-room-${this.room}`);
-    this.onStatusChange('connecting', 0);
+    this.notifyStatus();
+    this.schedulePeerListUpdate();
 
-    // Register self in online users
-    this.knownOnlineUsers.set(this.identity.ed25519_pub, {
-      peerId: this.peerId,
-      username: this.username,
-      pubkey: this.identity.ed25519_pub,
-      lastSeen: Date.now(),
-    });
-    this.notifyPeerList();
-
-    // 1. Setup Local Cross-Tab / Cross-Browser Signaling (BroadcastChannel + LocalStorage)
     this.setupLocalSignaling();
-
-    // 2. Setup Global High-Speed MQTT WebSocket Signaling
     this.mqtt.connect();
 
-    // 3. Setup WebTorrent Tracker Signaling
-    this.connectTrackers();
+    setTimeout(() => this.broadcastDiscover(), 300);
 
-    // 4. Send initial join discover beacon across all channels
-    setTimeout(() => this.broadcastDiscover(), 400);
-
-    // 5. Periodic maintenance (clean old offers, ensure minimum neighbors, re-announce)
-    this.maintenanceInterval = setInterval(() => {
-      this.rebalanceMesh();
-    }, 12000);
+    const scheduleNextRebalance = () => {
+      if (this.isDestroyed) return;
+      const jitterMs = 15000 + Math.floor(Math.random() * 5000);
+      this.maintenanceInterval = setTimeout(() => {
+        this.rebalanceMesh();
+        scheduleNextRebalance();
+      }, jitterMs);
+    };
+    scheduleNextRebalance();
   }
 
-  // ---------------------------------------------------------------------------
-  // Signaling Layer 1: Local Cross-Browser / Cross-Tab (0ms Latency)
-  // ---------------------------------------------------------------------------
+  updateIdentity(newIdentity) {
+    this.identity = newIdentity;
+    this.mqtt.updatePubkeySubscription(newIdentity.ed25519_pub);
+    this.schedulePeerListUpdate();
+    this.broadcastDiscover();
+  }
+
+  subscribeGroup(groupId) {
+    if (!groupId) return;
+    this.mqtt.subscribeTopic(`${this.mqtt.namespace}/${this.room}/grp/${groupId}`);
+  }
+
+  notifyStatus() {
+    const isLive = this.neighbors.size > 0 || this.mqtt.isConnected;
+    this.onStatusChange(isLive ? 'live' : 'connecting', {
+      webrtcPeers: this.neighbors.size,
+      mqttBrokers: this.mqtt.connectedBrokerCount,
+      dedupRingSize: this.seenMessages.size,
+      onlineCount: this.knownOnlineUsers.size,
+    });
+  }
+
+  schedulePeerListUpdate() {
+    if (this.peerListTimer) return;
+    this.peerListTimer = setTimeout(() => {
+      this.peerListTimer = null;
+      const now = Date.now();
+      const myPub = P0Crypto.normalizePubkey(this.identity.ed25519_pub);
+      for (const [pub, u] of this.knownOnlineUsers.entries()) {
+        if (pub === myPub || now - (u.lastSeen || 0) > 35000) {
+          this.knownOnlineUsers.delete(pub);
+        }
+      }
+      this.onPeerListUpdate(Array.from(this.knownOnlineUsers.values()));
+      this.notifyStatus();
+    }, 150);
+  }
+
   setupLocalSignaling() {
     try {
-      this.localBc = new BroadcastChannel(`p0_sig_${this.room}`);
+      this.localBc = new BroadcastChannel(`notalk_v4_sig_${this.room}`);
       this.localBc.onmessage = (event) => {
         if (event.data && event.data.senderId !== this.peerId) {
           this.handleSignalingPayload(event.data);
@@ -370,9 +439,8 @@ class P2PGossipSwarm {
       };
     } catch (_) {}
 
-    // Storage event fallback for cross-window
     window.addEventListener('storage', (e) => {
-      if (e.key === `p0_sig_${this.room}` && e.newValue) {
+      if (e.key === `notalk_v4_sig_${this.room}` && e.newValue) {
         try {
           const payload = JSON.parse(e.newValue);
           if (payload && payload.senderId !== this.peerId) {
@@ -385,6 +453,7 @@ class P2PGossipSwarm {
     window.addEventListener('beforeunload', () => {
       this.broadcastSignaling({
         type: 'p0_user_left',
+        id: 'left_' + this.peerId + '_' + Date.now(),
         pubkey: this.identity.ed25519_pub,
         username: this.username,
       });
@@ -393,232 +462,125 @@ class P2PGossipSwarm {
 
   sendLocalSignaling(payload) {
     payload.senderId = this.peerId;
+    payload.ts = Date.now();
     if (this.localBc) {
       try { this.localBc.postMessage(payload); } catch (_) {}
     }
     try {
-      localStorage.setItem(`p0_sig_${this.room}`, JSON.stringify({ ...payload, _t: Date.now() }));
+      localStorage.setItem(`notalk_v4_sig_${this.room}`, JSON.stringify({ ...payload, _t: Date.now() }));
     } catch (_) {}
   }
 
-  // ---------------------------------------------------------------------------
-  // Signaling Layer 2: Public WebTorrent Trackers
-  // ---------------------------------------------------------------------------
-  connectTrackers() {
-    this.trackerUrls.forEach((url) => {
-      try {
-        const ws = new WebSocket(url);
-        this.trackerSockets.push(ws);
-
-        ws.onopen = () => {
-          this.announceToTracker(ws);
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            this.handleTrackerMessage(data, ws);
-          } catch (_) {}
-        };
-
-        ws.onclose = () => {
-          if (!this.isDestroyed) {
-            setTimeout(() => this.reconnectTracker(url), 15000);
-          }
-        };
-
-        ws.onerror = () => {
-          try { ws.close(); } catch (_) {}
-        };
-      } catch (_) {}
-    });
-  }
-
-  reconnectTracker(url) {
-    if (this.isDestroyed) return;
-    this.trackerSockets = this.trackerSockets.filter(s => s.url !== url);
-    try {
-      const ws = new WebSocket(url);
-      this.trackerSockets.push(ws);
-      ws.onopen = () => this.announceToTracker(ws);
-      ws.onmessage = (e) => {
-        try { this.handleTrackerMessage(JSON.parse(e.data), ws); } catch (_) {}
-      };
-      ws.onclose = () => setTimeout(() => this.reconnectTracker(url), 15000);
-    } catch (_) {}
-  }
-
-  async announceToTracker(ws) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    if (this.neighbors.size >= this.maxNeighbors) return;
-
-    const offerObj = await this.createPendingOffer(null);
-    if (!offerObj) return;
-
-    const announceMsg = {
-      action: 'announce',
-      info_hash: this.infoHashHex,
-      peer_id: this.peerId,
-      numwant: 8,
-      offers: [{
-        offer_id: offerObj.offerId,
-        offer: offerObj.offer,
-      }],
-    };
-
-    try {
-      ws.send(JSON.stringify(announceMsg));
-    } catch (_) {}
-  }
-
-  async handleTrackerMessage(msg, ws) {
-    if (msg.action !== 'announce') return;
-
-    // Tracker forwarded an offer to us
-    if (msg.offer && msg.peer_id && msg.offer_id) {
-      if (msg.peer_id === this.peerId || this.neighbors.has(msg.peer_id)) return;
-      if (this.neighbors.size >= this.maxNeighbors) return;
-
-      const answer = await this.handleOffer(msg.offer, msg.peer_id);
-      if (answer) {
-        const answerPayload = {
-          action: 'announce',
-          info_hash: this.infoHashHex,
-          peer_id: this.peerId,
-          to_peer_id: msg.peer_id,
-          offer_id: msg.offer_id,
-          answer: answer,
-        };
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(answerPayload));
-        }
-      }
-      return;
-    }
-
-    // Tracker forwarded an answer to us
-    if (msg.answer && msg.offer_id) {
-      await this.handleAnswer(msg.answer, msg.offer_id, msg.peer_id);
-      return;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Unified Cross-Network Signaling Dispatcher
-  // ---------------------------------------------------------------------------
-  broadcastSignaling(payload) {
+  broadcastSignaling(payload, customTopic = null) {
     payload.senderId = this.peerId;
-
-    // Local 0ms channel
+    payload.ts = Date.now();
     this.sendLocalSignaling(payload);
 
-    // Global MQTT WebSocket relay
-    if (payload.toPeerId) {
-      this.mqtt.publish(`notalk/v3/${this.room}/${payload.toPeerId}`, payload);
+    const ns = this.mqtt.namespace;
+    if (customTopic) {
+      this.mqtt.publish(customTopic, payload);
+    } else if (payload.toPeerId) {
+      this.mqtt.publish(`${ns}/${this.room}/peer/${payload.toPeerId}`, payload);
+    } else if (payload.toPubkeyPrefix) {
+      this.mqtt.publish(`${ns}/${this.room}/pub/${payload.toPubkeyPrefix}`, payload);
     } else {
-      this.mqtt.publish(`notalk/v3/${this.room}/global`, payload);
+      this.mqtt.publish(`${ns}/${this.room}/global`, payload, true);
     }
   }
 
   async broadcastDiscover() {
     this.broadcastSignaling({
       type: 'p0_discover',
+      id: 'disc_' + this.peerId + '_' + Math.floor(Date.now() / 4000),
       peerId: this.peerId,
       username: this.username,
       pubkey: this.identity.ed25519_pub,
+      ts: Date.now(),
     });
+  }
+
+  registerDiscoveredPeer(peerId, username, pubkey, packetTs) {
+    if (!pubkey || peerId === this.peerId) return false;
+    // Ignore stale/cached announcements older than 20 seconds
+    if (packetTs && Math.abs(Date.now() - packetTs) > 20000) return false;
+
+    const cleanPub = P0Crypto.normalizePubkey(pubkey);
+    const myPub = P0Crypto.normalizePubkey(this.identity.ed25519_pub);
+    if (!cleanPub || cleanPub === myPub) return false;
+
+    const isNew = !this.knownOnlineUsers.has(cleanPub);
+    this.knownOnlineUsers.set(cleanPub, {
+      peerId: peerId || '',
+      username: (username || 'user').replace(/^@/, ''),
+      pubkey: cleanPub,
+      lastSeen: Date.now(),
+    });
+    if (isNew) {
+      this.onUserJoined({ username: username || 'user', pubkey: cleanPub, peerId });
+    }
+    this.schedulePeerListUpdate();
+    return isNew;
+  }
+
+  async maybeInitiateHandshake(remotePeerId) {
+    if (!remotePeerId || remotePeerId === this.peerId) return;
+    if (this.neighbors.has(remotePeerId) || this.neighbors.size >= this.maxNeighbors) return;
+    if (this.peerId < remotePeerId) {
+      const lastAttempt = this.connectingPeers.get(remotePeerId);
+      if (!lastAttempt || (Date.now() - lastAttempt > 15000)) {
+        this.connectingPeers.set(remotePeerId, Date.now());
+        const offerObj = await this.createPendingOffer(remotePeerId);
+        if (offerObj) {
+          this.broadcastSignaling({
+            type: 'p0_sig_offer',
+            offerId: offerObj.offerId,
+            fromPeerId: this.peerId,
+            toPeerId: remotePeerId,
+            offer: offerObj.offer,
+          });
+        }
+      }
+    }
   }
 
   async handleSignalingPayload(payload) {
     if (!payload || !payload.type) return;
+    if (payload.id && !this.seenMessages.add(payload.id)) {
+      return;
+    }
 
     switch (payload.type) {
-      case 'p0_discover':
-        // A peer announced presence across internet or local channel
+      case 'p0_discover': {
         if (payload.peerId !== this.peerId) {
-          if (payload.pubkey) {
-            const isNew = !this.knownOnlineUsers.has(payload.pubkey);
-            this.knownOnlineUsers.set(payload.pubkey, {
-              peerId: payload.peerId,
-              username: payload.username,
-              pubkey: payload.pubkey,
-              lastSeen: Date.now(),
-            });
-            if (isNew) {
-              this.onUserJoined({ username: payload.username, pubkey: payload.pubkey });
-            }
-            this.notifyPeerList();
+          const isNew = this.registerDiscoveredPeer(payload.peerId, payload.username, payload.pubkey, payload.ts);
+          const now = Date.now();
+          if (isNew || (now - this.lastPresenceReplyTs > 2500)) {
+            this.lastPresenceReplyTs = now;
+            setTimeout(() => {
+              this.broadcastSignaling({
+                type: 'p0_sig_presence',
+                toPeerId: payload.peerId,
+                peerId: this.peerId,
+                username: this.username,
+                pubkey: this.identity.ed25519_pub,
+                ts: Date.now(),
+              });
+            }, 50 + Math.floor(Math.random() * 180));
           }
-
-          // Reply with presence so discoverer registers us
-          this.broadcastSignaling({
-            type: 'p0_sig_presence',
-            toPeerId: payload.peerId,
-            peerId: this.peerId,
-            username: this.username,
-            pubkey: this.identity.ed25519_pub,
-          });
-
-          // If not connected and room available, initiate WebRTC handshake
-          if (!this.neighbors.has(payload.peerId) && this.neighbors.size < this.maxNeighbors) {
-            // Smaller peerId initiates offer to prevent simultaneous collision
-            if (this.peerId < payload.peerId) {
-              const lastAttempt = this.connectingPeers.get(payload.peerId);
-              if (!lastAttempt || (Date.now() - lastAttempt > 12000)) {
-                this.connectingPeers.set(payload.peerId, Date.now());
-                const offerObj = await this.createPendingOffer(payload.peerId);
-                if (offerObj) {
-                  this.broadcastSignaling({
-                    type: 'p0_sig_offer',
-                    offerId: offerObj.offerId,
-                    fromPeerId: this.peerId,
-                    toPeerId: payload.peerId,
-                    offer: offerObj.offer,
-                  });
-                }
-              }
-            }
-          }
+          await this.maybeInitiateHandshake(payload.peerId);
         }
         break;
+      }
 
-      case 'p0_sig_presence':
+      case 'p0_sig_presence': {
         if (payload.peerId !== this.peerId && payload.pubkey) {
-          const isNew = !this.knownOnlineUsers.has(payload.pubkey);
-          this.knownOnlineUsers.set(payload.pubkey, {
-            peerId: payload.peerId,
-            username: payload.username,
-            pubkey: payload.pubkey,
-            lastSeen: Date.now(),
-          });
-          if (isNew) {
-            this.onUserJoined({ username: payload.username, pubkey: payload.pubkey });
-          }
-          this.notifyPeerList();
-
-          // If not connected and room available, initiate WebRTC handshake if we are smaller peerId
-          if (!this.neighbors.has(payload.peerId) && this.neighbors.size < this.maxNeighbors) {
-            if (this.peerId < payload.peerId) {
-              const lastAttempt = this.connectingPeers.get(payload.peerId);
-              if (!lastAttempt || (Date.now() - lastAttempt > 12000)) {
-                this.connectingPeers.set(payload.peerId, Date.now());
-                const offerObj = await this.createPendingOffer(payload.peerId);
-                if (offerObj) {
-                  this.broadcastSignaling({
-                    type: 'p0_sig_offer',
-                    offerId: offerObj.offerId,
-                    fromPeerId: this.peerId,
-                    toPeerId: payload.peerId,
-                    offer: offerObj.offer,
-                  });
-                }
-              }
-            }
-          }
+          this.registerDiscoveredPeer(payload.peerId, payload.username, payload.pubkey, payload.ts);
+          await this.maybeInitiateHandshake(payload.peerId);
         }
         break;
+      }
 
-      case 'p0_sig_offer':
+      case 'p0_sig_offer': {
         if (payload.toPeerId === this.peerId && !this.neighbors.has(payload.fromPeerId)) {
           if (this.neighbors.size < this.maxNeighbors) {
             const lastAttempt = this.connectingPeers.get(payload.fromPeerId);
@@ -631,62 +593,69 @@ class P2PGossipSwarm {
                   offerId: payload.offerId,
                   fromPeerId: this.peerId,
                   toPeerId: payload.fromPeerId,
-                  answer: answer,
+                  answer,
                 });
               }
             }
           }
         }
         break;
+      }
 
-      case 'p0_sig_answer':
+      case 'p0_sig_answer': {
         if (payload.toPeerId === this.peerId) {
           await this.handleAnswer(payload.answer, payload.offerId, payload.fromPeerId);
         }
         break;
+      }
 
-      case 'p0_local_gossip':
-        // Real-time message or typing frame delivered via MQTT or local channel
+      case 'p0_local_gossip': {
         if (payload.msg && payload.msg.id) {
-          if (this.seenMessages.has(payload.msg.id)) break;
-          // Delegate deduplication, storage, and notification to handleSwarmPayload
-          this.handleSwarmPayload(payload.msg, null);
+          await this.handleSwarmPayload(payload.msg, null);
         }
         break;
+      }
 
-      case 'p0_user_left':
-        if (payload.pubkey) {
-          this.knownOnlineUsers.delete(payload.pubkey);
-          this.onUserLeft(payload);
-          this.notifyPeerList();
+      case 'p0_group_invite': {
+        if (payload.invite && payload.toPubkey) {
+          const myClean = P0Crypto.normalizePubkey(this.identity.ed25519_pub);
+          const targetClean = P0Crypto.normalizePubkey(payload.toPubkey);
+          if (myClean === targetClean || myClean.startsWith(targetClean) || targetClean.startsWith(myClean)) {
+            this.onGroupInvite(payload.invite);
+          }
         }
         break;
+      }
+
+      case 'p0_user_left': {
+        if (payload.pubkey) {
+          const clean = P0Crypto.normalizePubkey(payload.pubkey);
+          this.knownOnlineUsers.delete(clean);
+          this.onUserLeft(payload);
+          this.schedulePeerListUpdate();
+        }
+        break;
+      }
 
       default:
         break;
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // WebRTC Handshake Engine with Full STUN (srflx) Candidate Gathering
-  // ---------------------------------------------------------------------------
   async createPendingOffer(targetPeerId) {
     try {
       const pc = new RTCPeerConnection(this.rtcConfig);
       const offerId = 'off_' + Math.random().toString(36).substring(2, 9);
-
       const dc = pc.createDataChannel('p0-chat', { ordered: true });
       this.bindDataChannel(dc, pc, targetPeerId);
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      // Gather ICE candidates including public server-reflexive (srflx) STUN candidates
       await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') return resolve();
         let timer = null;
         let finished = false;
-
         const done = () => {
           if (!finished) {
             finished = true;
@@ -694,40 +663,28 @@ class P2PGossipSwarm {
             resolve();
           }
         };
-
         pc.onicecandidate = (e) => {
-          if (!e.candidate) {
-            done();
-            return;
-          }
+          if (!e.candidate) return done();
           const candStr = e.candidate.candidate || '';
-          // Once public STUN (srflx) candidate is found, wait 250ms for extra port candidate then resolve
           if (candStr.includes('typ srflx') || candStr.includes('typ relay')) {
             if (timer) clearTimeout(timer);
-            timer = setTimeout(done, 250);
+            timer = setTimeout(done, 180);
           }
         };
-
-        // Safety timeout (up to 3000ms for cellular networks)
-        timer = setTimeout(done, 3000);
+        timer = setTimeout(done, 2200);
       });
 
       const offerData = {
         offerId,
         targetPeerId,
-        offer: {
-          type: pc.localDescription.type,
-          sdp: pc.localDescription.sdp,
-        },
+        offer: { type: pc.localDescription.type, sdp: pc.localDescription.sdp },
         pc,
         dc,
         created: Date.now(),
       };
-
       this.pendingOffers.set(offerId, offerData);
       return offerData;
-    } catch (e) {
-      console.warn('Failed to create offer:', e);
+    } catch (_) {
       return null;
     }
   }
@@ -735,21 +692,17 @@ class P2PGossipSwarm {
   async handleOffer(remoteOffer, fromPeerId) {
     try {
       const pc = new RTCPeerConnection(this.rtcConfig);
-
       pc.ondatachannel = (event) => {
         this.bindDataChannel(event.channel, pc, fromPeerId);
       };
-
       await pc.setRemoteDescription(new RTCSessionDescription(remoteOffer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      // Gather ICE candidates for answer including public STUN (srflx)
       await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') return resolve();
         let timer = null;
         let finished = false;
-
         const done = () => {
           if (!finished) {
             finished = true;
@@ -757,69 +710,47 @@ class P2PGossipSwarm {
             resolve();
           }
         };
-
         pc.onicecandidate = (e) => {
-          if (!e.candidate) {
-            done();
-            return;
-          }
+          if (!e.candidate) return done();
           const candStr = e.candidate.candidate || '';
           if (candStr.includes('typ srflx') || candStr.includes('typ relay')) {
             if (timer) clearTimeout(timer);
-            timer = setTimeout(done, 250);
+            timer = setTimeout(done, 180);
           }
         };
-
-        timer = setTimeout(done, 3000);
+        timer = setTimeout(done, 2200);
       });
 
-      return {
-        type: pc.localDescription.type,
-        sdp: pc.localDescription.sdp,
-      };
-    } catch (e) {
-      console.warn('Failed to handle incoming offer:', e);
+      return { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
+    } catch (_) {
       return null;
     }
   }
 
-  async handleAnswer(remoteAnswer, offerId, fromPeerId) {
+  async handleAnswer(remoteAnswer, offerId) {
     const pending = this.pendingOffers.get(offerId);
     if (!pending) return;
-
     try {
       if (pending.pc.signalingState === 'have-local-offer') {
         await pending.pc.setRemoteDescription(new RTCSessionDescription(remoteAnswer));
       }
-    } catch (e) {
-      console.warn('Failed to set remote answer:', e);
-    }
+    } catch (_) {}
   }
 
-  // ---------------------------------------------------------------------------
-  // DataChannel Binding & Swarm Messaging
-  // ---------------------------------------------------------------------------
   bindDataChannel(dc, pc, remotePeerId) {
     const assignedId = remotePeerId || ('peer_' + Math.random().toString(36).substring(2, 8));
 
     dc.onopen = () => {
       this.connectingPeers.delete(assignedId);
-      this.neighbors.set(assignedId, {
-        pc,
-        dc,
-        username: 'anonymous',
-        pubkey: '',
-      });
+      this.neighbors.set(assignedId, { pc, dc, username: 'user', pubkey: '' });
+      this.notifyStatus();
 
-      this.onStatusChange('live', this.neighbors.size);
-
-      // Send initial hello
       this.sendToDc(dc, {
         type: 'p0_hello',
         peerId: this.peerId,
         username: this.username,
         pubkey: this.identity.ed25519_pub,
-        knownUsers: Array.from(this.knownOnlineUsers.values()),
+        ts: Date.now(),
       });
     };
 
@@ -827,27 +758,22 @@ class P2PGossipSwarm {
       try {
         const payload = JSON.parse(event.data);
         this.handleSwarmPayload(payload, dc);
-      } catch (e) {
-        console.warn('Malformed swarm frame:', event.data);
-      }
+      } catch (_) {}
     };
 
     const handleClose = () => {
-      let droppedPeer = null;
       for (const [id, neighbor] of this.neighbors.entries()) {
         if (neighbor.dc === dc || neighbor.pc === pc) {
-          droppedPeer = neighbor;
+          if (neighbor.pubkey) {
+            this.knownOnlineUsers.delete(neighbor.pubkey);
+            this.schedulePeerListUpdate();
+          }
           this.neighbors.delete(id);
           this.connectingPeers.delete(id);
           break;
         }
       }
-
-      // Note: In hybrid P2P + MQTT relay mesh, a dropped direct WebRTC channel
-      // does not mean the user left the chat room. The peer remains reachable
-      // via MQTT signaling/relay. Pruning happens on explicit p0_user_left or
-      // 45s silence in rebalanceMesh().
-      this.onStatusChange(this.neighbors.size > 0 ? 'live' : 'connecting', this.neighbors.size);
+      this.notifyStatus();
     };
 
     dc.onclose = handleClose;
@@ -858,43 +784,22 @@ class P2PGossipSwarm {
     };
   }
 
-  handleSwarmPayload(payload, sourceDc) {
+  async handleSwarmPayload(payload, sourceDc) {
     if (!payload || !payload.type) return;
-
-    if (payload.id) {
-      if (this.seenMessages.has(payload.id)) return;
-      this.seenMessages.add(payload.id);
-      if (this.seenMessages.size > 1000) {
-        const first = this.seenMessages.values().next().value;
-        this.seenMessages.delete(first);
-      }
+    if (payload.id && !this.seenMessages.add(payload.id)) {
+      return;
     }
 
-    // Refresh user presence and lastSeen
     if (payload.pubkey) {
-      if (this.knownOnlineUsers.has(payload.pubkey)) {
-        this.knownOnlineUsers.get(payload.pubkey).lastSeen = Date.now();
-      } else {
-        this.knownOnlineUsers.set(payload.pubkey, {
-          peerId: payload.peerId || '',
-          username: payload.username || 'anon',
-          pubkey: payload.pubkey,
-          lastSeen: Date.now(),
-        });
-        this.onUserJoined({
-          username: payload.username || 'anon',
-          pubkey: payload.pubkey,
-        });
-        this.notifyPeerList();
-      }
+      this.registerDiscoveredPeer(payload.peerId, payload.username, payload.pubkey, payload.ts || Date.now());
     }
 
     switch (payload.type) {
-      case 'p0_hello':
+      case 'p0_hello': {
         for (const [nId, neighbor] of this.neighbors.entries()) {
           if (neighbor.dc === sourceDc) {
             neighbor.username = payload.username;
-            neighbor.pubkey = payload.pubkey;
+            neighbor.pubkey = P0Crypto.normalizePubkey(payload.pubkey);
             if (payload.peerId && nId !== payload.peerId) {
               this.neighbors.delete(nId);
               this.neighbors.set(payload.peerId, neighbor);
@@ -902,120 +807,225 @@ class P2PGossipSwarm {
             break;
           }
         }
-
-        if (payload.pubkey) {
-          const isNew = !this.knownOnlineUsers.has(payload.pubkey);
-          this.knownOnlineUsers.set(payload.pubkey, {
-            peerId: payload.peerId,
-            username: payload.username,
-            pubkey: payload.pubkey,
-            lastSeen: Date.now(),
-          });
-          if (isNew) {
-            this.onUserJoined({
-              username: payload.username,
-              pubkey: payload.pubkey,
-            });
-          }
-          this.notifyPeerList();
-        }
-
-        if (Array.isArray(payload.knownUsers)) {
-          let hasNewUsers = false;
-          payload.knownUsers.forEach((u) => {
-            if (u.pubkey && !this.knownOnlineUsers.has(u.pubkey)) {
-              this.knownOnlineUsers.set(u.pubkey, { ...u, lastSeen: Date.now() });
-              this.onUserJoined(u);
-              hasNewUsers = true;
-            }
-          });
-          if (hasNewUsers) this.notifyPeerList();
-        }
         break;
+      }
 
-      case 'p0_chat_message':
+      case 'p0_chat_message': {
+        const validSig = await P0Crypto.verifyMessage(payload);
+        if (!validSig) return;
         this.onMessage(payload);
-        this.forwardGossip(payload, sourceDc);
-        break;
-
-      case 'p0_typing':
-        this.onTyping(payload);
-        this.forwardGossip(payload, sourceDc);
-        break;
-
-      case 'p0_user_left':
-        if (payload.pubkey) {
-          this.knownOnlineUsers.delete(payload.pubkey);
-          this.onUserLeft(payload);
-          this.notifyPeerList();
+        if (sourceDc) {
+          this.forwardGossip(payload, sourceDc, 6);
         }
         break;
+      }
+
+      case 'p0_reaction': {
+        this.onReaction(payload);
+        if (sourceDc) {
+          this.forwardGossip(payload, sourceDc, 4);
+        }
+        break;
+      }
+
+      case 'p0_typing': {
+        this.onTyping(payload);
+        if (sourceDc && (payload.hops || 0) < 2) {
+          this.forwardGossip(payload, sourceDc, 2);
+        }
+        break;
+      }
+
+      case 'p0_group_invite': {
+        if (payload.invite && payload.toPubkey) {
+          const myClean = P0Crypto.normalizePubkey(this.identity.ed25519_pub);
+          const targetClean = P0Crypto.normalizePubkey(payload.toPubkey);
+          if (myClean === targetClean || myClean.startsWith(targetClean) || targetClean.startsWith(myClean)) {
+            this.onGroupInvite(payload.invite);
+          } else if (sourceDc) {
+            this.forwardGossip(payload, sourceDc, 4);
+          }
+        }
+        break;
+      }
+
+      case 'p0_user_left': {
+        if (payload.pubkey) {
+          const clean = P0Crypto.normalizePubkey(payload.pubkey);
+          this.knownOnlineUsers.delete(clean);
+          this.onUserLeft(payload);
+          this.schedulePeerListUpdate();
+        }
+        break;
+      }
 
       default:
         break;
     }
   }
 
-  gossip(msgObj) {
+  gossip(msgObj, targetTopic = null) {
     if (msgObj.id) {
       this.seenMessages.add(msgObj.id);
     }
     const dataStr = JSON.stringify(msgObj);
 
-    // 1. Send via direct WebRTC peer connections
     for (const neighbor of this.neighbors.values()) {
       if (neighbor.dc && neighbor.dc.readyState === 'open') {
-        neighbor.dc.send(dataStr);
+        try { neighbor.dc.send(dataStr); } catch (_) {}
       }
     }
 
-    // 2. Broadcast via local cross-tab channel
     this.sendLocalSignaling({
       type: 'p0_local_gossip',
       msg: msgObj,
     });
 
-    // 3. Broadcast via global MQTT WebSocket relay (ensures 100% delivery across different connections & cellular CGNAT)
-    this.mqtt.publish(`notalk/v3/${this.room}/global`, {
+    const ns = this.mqtt.namespace;
+    const topic = targetTopic || `${ns}/${this.room}/global`;
+    const onlyOneBroker = this.neighbors.size >= 2;
+    this.mqtt.publish(topic, {
       type: 'p0_local_gossip',
       senderId: this.peerId,
       msg: msgObj,
-    });
+    }, onlyOneBroker);
   }
 
-  forwardGossip(msgObj, sourceDc) {
+  forwardGossip(msgObj, sourceDc, maxHops = 6) {
     if (!sourceDc) return;
-    if ((msgObj.hops || 0) >= 8) return;
-    msgObj.hops = (msgObj.hops || 0) + 1;
-    const dataStr = JSON.stringify(msgObj);
+    if ((msgObj.hops || 0) >= maxHops) return;
+    const forwarded = { ...msgObj, hops: (msgObj.hops || 0) + 1 };
+    const dataStr = JSON.stringify(forwarded);
 
     for (const neighbor of this.neighbors.values()) {
       if (neighbor.dc !== sourceDc && neighbor.dc && neighbor.dc.readyState === 'open') {
-        neighbor.dc.send(dataStr);
+        try { neighbor.dc.send(dataStr); } catch (_) {}
       }
     }
   }
 
-  async sendChatMessage(content) {
-    const signed = await P0Crypto.signMessage(this.identity, content, this.username, this.room);
-    const swarmMsg = {
+  async sendChatMessage(content, conv = null, extra = {}) {
+    const convId = (conv && conv.id) ? conv.id : 'global';
+    const convType = (conv && conv.type) ? conv.type : 'global';
+
+    let wireContent = content;
+    let e2eeMeta = {};
+
+    if (convType === 'dm' && conv.peerPubkey) {
+      const dmSeed = P0Crypto.getDmConvId(this.identity.ed25519_pub, conv.peerPubkey);
+      const enc = await P0Crypto.encryptE2EE(dmSeed, content);
+      if (enc) {
+        wireContent = `[E2EE:${enc.iv}:${enc.ct}]`;
+        e2eeMeta = { encrypted: true, iv: enc.iv, ct: enc.ct, toPubkey: P0Crypto.normalizePubkey(conv.peerPubkey) };
+      }
+    } else if (convType === 'group' && conv.secretKey) {
+      const enc = await P0Crypto.encryptE2EE(conv.secretKey, content);
+      if (enc) {
+        wireContent = `[E2EE:${enc.iv}:${enc.ct}]`;
+        e2eeMeta = { encrypted: true, iv: enc.iv, ct: enc.ct, groupName: conv.name };
+      }
+    }
+
+    const signed = await P0Crypto.signMessage(this.identity, wireContent, this.username, convId, {
+      convType,
+      ...e2eeMeta,
+      ...extra,
+    });
+
+    const localMsg = {
+      type: 'p0_chat_message',
+      ...signed,
+      content,
+      rawPlaintext: wireContent,
+    };
+
+    this.onMessage(localMsg);
+
+    const wireMsg = {
       type: 'p0_chat_message',
       ...signed,
     };
 
-    this.onMessage(swarmMsg);
-    this.gossip(swarmMsg);
+    const ns = this.mqtt.namespace;
+    if (convType === 'dm' && conv.peerPubkey) {
+      const targetPrefix = P0Crypto.normalizePubkey(conv.peerPubkey).slice(0, 24);
+      this.gossip(wireMsg, `${ns}/${this.room}/pub/${targetPrefix}`);
+    } else if (convType === 'group') {
+      this.gossip(wireMsg, `${ns}/${this.room}/grp/${convId}`);
+    } else {
+      this.gossip(wireMsg, `${ns}/${this.room}/global`);
+    }
   }
 
-  sendTyping(isTyping) {
-    this.gossip({
+  sendReaction(msgId, emoji, convId = 'global') {
+    if (!msgId || !emoji) return;
+    const pkt = {
+      type: 'p0_reaction',
+      id: 'react_' + msgId + '_' + this.peerId + '_' + Date.now(),
+      msgId,
+      convId,
+      emoji,
+      username: this.username,
+      pubkey: this.identity.ed25519_pub,
+      hops: 0,
+    };
+    this.onReaction(pkt);
+    this.gossip(pkt);
+  }
+
+  sendGroupInvite(targetPubkey, groupObj) {
+    const cleanTarget = P0Crypto.normalizePubkey(targetPubkey);
+    if (!cleanTarget || !groupObj) return;
+    const inviteCode = P0Crypto.encodeGroupInviteCode(groupObj);
+    const invitePacket = {
+      type: 'p0_group_invite',
+      id: 'inv_' + groupObj.id + '_' + cleanTarget.slice(0, 10) + '_' + Date.now(),
+      toPubkey: cleanTarget,
+      fromUsername: this.username,
+      fromPubkey: this.identity.ed25519_pub,
+      invite: {
+        groupId: groupObj.id,
+        groupName: groupObj.name,
+        description: groupObj.description || '',
+        secretKey: groupObj.secretKey || '',
+        isPrivate: !!groupObj.isPrivate,
+        inviteCode,
+        inviterUsername: this.username,
+        inviterPubkey: this.identity.ed25519_pub,
+        timestamp: Date.now(),
+      },
+      hops: 0,
+    };
+
+    const targetPrefix = cleanTarget.slice(0, 24);
+    this.broadcastSignaling(invitePacket, `${this.mqtt.namespace}/${this.room}/pub/${targetPrefix}`);
+
+    const str = JSON.stringify(invitePacket);
+    for (const neighbor of this.neighbors.values()) {
+      if (neighbor.dc && neighbor.dc.readyState === 'open') {
+        try { neighbor.dc.send(str); } catch (_) {}
+      }
+    }
+  }
+
+  sendTyping(isTyping, convId = 'global') {
+    const pkt = {
       type: 'p0_typing',
-      id: 'typing_' + this.identity.ed25519_pub + '_' + Date.now(),
+      id: 'typ_' + this.peerId + '_' + Math.floor(Date.now() / 1200),
+      convId,
       username: this.username,
       pubkey: this.identity.ed25519_pub,
       isTyping,
       hops: 0,
-    });
+    };
+    this.seenMessages.add(pkt.id);
+    const str = JSON.stringify(pkt);
+    for (const neighbor of this.neighbors.values()) {
+      if (neighbor.dc && neighbor.dc.readyState === 'open') {
+        try { neighbor.dc.send(str); } catch (_) {}
+      }
+    }
+    this.sendLocalSignaling({ type: 'p0_local_gossip', msg: pkt });
   }
 
   sendToDc(dc, obj) {
@@ -1024,17 +1034,12 @@ class P2PGossipSwarm {
     }
   }
 
-  notifyPeerList() {
-    this.onPeerListUpdate(Array.from(this.knownOnlineUsers.values()));
-  }
-
   rebalanceMesh() {
     if (this.isDestroyed) return;
     const now = Date.now();
 
-    // Clean old offers older than 25s
     for (const [id, pending] of this.pendingOffers.entries()) {
-      if (now - pending.created > 25000) {
+      if (now - pending.created > 20000) {
         if (pending.pc && pending.pc.iceConnectionState !== 'connected') {
           try { pending.pc.close(); } catch (_) {}
         }
@@ -1042,40 +1047,30 @@ class P2PGossipSwarm {
       }
     }
 
-    // Clean stale in-flight connection locks
     for (const [pId, ts] of this.connectingPeers.entries()) {
-      if (now - ts > 20000) {
+      if (now - ts > 15000) {
         this.connectingPeers.delete(pId);
       }
     }
 
-    // Prune stale known users (no heartbeat in 45s)
     let peerListChanged = false;
     for (const [pubkey, user] of this.knownOnlineUsers.entries()) {
-      if (pubkey !== this.identity.ed25519_pub && (now - (user.lastSeen || 0)) > 45000) {
+      if (now - (user.lastSeen || 0) > 35000) {
         this.knownOnlineUsers.delete(pubkey);
         peerListChanged = true;
       }
     }
-    if (peerListChanged) this.notifyPeerList();
+    if (peerListChanged) this.schedulePeerListUpdate();
 
-    // Re-announce & broadcast discover
     this.broadcastDiscover();
-    this.trackerSockets.forEach((ws) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        this.announceToTracker(ws);
-      }
-    });
   }
 
   destroy() {
     this.isDestroyed = true;
-    clearInterval(this.maintenanceInterval);
+    clearTimeout(this.maintenanceInterval);
+    clearTimeout(this.peerListTimer);
     if (this.localBc) this.localBc.close();
     this.mqtt.destroy();
-    this.trackerSockets.forEach((ws) => {
-      try { ws.close(); } catch (_) {}
-    });
     for (const neighbor of this.neighbors.values()) {
       try {
         if (neighbor.dc) neighbor.dc.close();

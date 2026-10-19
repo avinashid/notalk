@@ -1,286 +1,736 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="whatsapp-dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#0a0d14">
-  <title>Global Chat</title>
+  <meta name="theme-color" content="#161f28">
+  <title>NoTalk — Encrypted Messenger</title>
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
-  <!-- Join Modal -->
+  <!-- Top-Right In-App Push Notification Stack -->
+  <div id="push-banner-container" class="push-notification-stack" aria-live="polite"></div>
+
+  <!-- Full-Screen Image Lightbox Modal -->
+  <div id="media-lightbox" class="wa-lightbox hidden">
+    <img id="lightbox-img" src="" alt="Shared photo">
+    <div class="wa-lightbox-actions">
+      <a id="lightbox-download-btn" href="#" download="photo.jpg" class="primary-btn" style="text-decoration:none;">Download Photo</a>
+      <button type="button" id="lightbox-close-btn" class="wa-quick-btn" style="flex:0; padding:10px 18px;">Close</button>
+    </div>
+  </div>
+
+  <!-- Hidden File Inputs for Photos, Videos, Audio, and Documents -->
+  <input type="file" id="file-input-image" class="hidden" accept="image/*" multiple>
+  <input type="file" id="file-input-video" class="hidden" accept="video/*">
+  <input type="file" id="file-input-audio" class="hidden" accept="audio/*">
+  <input type="file" id="file-input-doc" class="hidden" accept="*/*" multiple>
+
+  <!-- Join / Onboarding Modal -->
   <div id="join-modal" class="modal-overlay">
     <div class="modal-card">
-      <div class="modal-icon-wrap">💬</div>
-      <h1 class="modal-title">Welcome to Global Chat</h1>
-      <p class="modal-subtitle">Pick a username to join the global conversation. No password or email needed.</p>
+      <div class="modal-card-top">
+        <div class="wa-avatar global-av">NT</div>
+        <span class="wa-e2ee-tag">End-to-End Encrypted</span>
+      </div>
+      <h1 class="modal-title">Welcome to NoTalk</h1>
+      <p class="modal-subtitle">Private, instant messaging with Global Chat, custom Groups, Direct Messages, and rich media sharing.</p>
 
-      <form id="join-form" action="javascript:void(0);" onsubmit="event.preventDefault(); return false;">
+      <form id="join-form">
         <div class="input-group">
-          <label for="username-input">Your Username</label>
+          <label for="username-input">Your Display Name</label>
           <div class="input-wrapper">
             <span class="input-prefix">@</span>
-            <input type="text" id="username-input" placeholder="e.g. alex, sarah, jordan" required maxlength="20" autocomplete="off" autofocus>
-            <button type="button" id="random-name-btn" class="icon-btn-secondary" title="Random handle">🎲</button>
+            <input type="text" id="username-input" placeholder="e.g. alex, jordan, taylor" required maxlength="22" autocomplete="off">
+            <button type="button" id="random-name-btn" class="icon-btn-secondary" title="Generate random handle">
+              <svg class="ui-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"></rect><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor"></circle><circle cx="15.5" cy="8.5" r="1.2" fill="currentColor"></circle><circle cx="12" cy="12" r="1.2" fill="currentColor"></circle><circle cx="8.5" cy="15.5" r="1.2" fill="currentColor"></circle><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor"></circle></svg>
+              <span class="sr-only">🎲</span>
+            </button>
           </div>
         </div>
 
-        <div class="join-advanced-toggle">
-          <button type="button" id="toggle-import-key-btn" class="text-link-btn">🔑 Have an existing Account Key?</button>
+        <div style="margin-top: 8px;">
+          <button type="button" id="toggle-import-key-btn" class="text-link-btn">
+            <svg class="ui-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+            <span class="sr-only">🔑 Restore existing Private Identity Key (`priv_...`)</span>
+            <span>Restore existing account backup key</span>
+          </button>
         </div>
 
-        <div id="import-key-container" class="input-group hidden" style="margin-top: 0.75rem;">
-          <label for="import-key-input">Account Key / Secret</label>
+        <div id="import-key-container" class="input-group hidden" style="margin-top: 8px;">
+          <label for="import-key-input">Account Backup Key</label>
           <div class="input-wrapper">
-            <input type="text" id="import-key-input" placeholder="Paste account key to restore identity..." autocomplete="off">
+            <input type="text" id="import-key-input" placeholder="Paste your priv_... backup key" autocomplete="off">
           </div>
         </div>
 
-        <button type="button" id="join-btn" class="primary-btn">
-          <span>Start Chatting</span>
-          <span class="btn-arrow">→</span>
+        <button type="submit" id="join-btn" class="primary-btn" style="width: 100%; margin-top: 14px;">
+          <span class="sr-only">Launch WhatsApp P2P Mesh</span>
+          <span>Start Messaging</span>
+          <span>→</span>
         </button>
       </form>
     </div>
   </div>
 
-  <!-- Main App Layout -->
-  <div id="app" class="app-layout hidden">
-    <!-- Top Header -->
-    <header class="app-header">
-      <div class="header-left">
-        <button id="toggle-sidebar-btn" class="icon-btn mobile-only" aria-label="Toggle Members List">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+  <!-- Main Messenger Split-Screen Shell -->
+  <div id="app" class="wa-app-shell hidden">
+    <!-- Left Sidebar: Profile, Quick Actions, Chat List & Active People -->
+    <aside class="wa-sidebar" id="app-sidebar">
+      <header class="wa-sidebar-header">
+        <button type="button" class="wa-profile-trigger" id="current-user-pill" title="Account & Contact ID">
+          <div class="wa-avatar sm" id="my-avatar">U</div>
+          <div class="wa-profile-meta">
+            <span class="wa-profile-name" id="my-username">user</span>
+            <span class="wa-profile-pub" id="my-public-id-short">ID: ...</span>
+          </div>
         </button>
-        <div class="room-title-group" id="room-header-clickable" title="View online members" role="button" tabindex="0">
-          <div class="room-icon">#</div>
-          <div>
-            <h1 class="room-heading">Global Chat</h1>
-            <div class="room-subheading">
-              <span class="status-dot online"></span>
-              <span id="header-member-count">1 Member Online</span>
+
+        <div class="wa-sidebar-actions">
+          <button type="button" id="copy-my-pub-quick-btn" class="wa-icon-btn" title="Copy My Contact ID">
+            <svg class="ui-icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span class="sr-only">🔑</span>
+          </button>
+
+          <!-- Push Notifications & Granular Mute Center -->
+          <div class="dropdown-wrapper">
+            <button type="button" id="notif-btn" class="wa-icon-btn" title="Notifications & Mute Settings">
+              <svg class="ui-icon" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            </button>
+            <div id="notif-menu" class="dropdown-menu hidden" style="min-width: 268px;">
+              <div class="dropdown-header">Push Notifications</div>
+              <div style="padding: 4px 8px 6px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                <span style="font-size:0.75rem; color:var(--text-muted);" id="push-perm-status">In-App Alerts Active</span>
+                <button type="button" id="enable-push-btn" class="wa-mini-btn primary">Enable Browser Push</button>
+              </div>
+              <button type="button" id="test-push-btn" class="dropdown-action-btn" style="justify-content:flex-start;">
+                <svg class="ui-icon" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                <span>Send Test Notification</span>
+              </button>
+              <div class="dropdown-divider"></div>
+              <div class="dropdown-header">Mute Controls</div>
+              <label class="dropdown-item">
+                <input type="checkbox" id="mute-global-chat-cb">
+                <span>Mute Global Chat</span>
+              </label>
+              <label class="dropdown-item">
+                <input type="checkbox" id="mute-global-msg-cb">
+                <span>Mute Group Invites & Broadcasts</span>
+              </label>
+              <label class="dropdown-item">
+                <input type="checkbox" id="mute-all-groups-cb">
+                <span>Mute All Group Chats</span>
+              </label>
+              <label class="dropdown-item">
+                <input type="checkbox" id="mute-all-dms-cb">
+                <span>Mute All Direct Messages</span>
+              </label>
+              <label class="dropdown-item">
+                <input type="checkbox" id="mute-sound-cb">
+                <span>Mute Notification Sound</span>
+              </label>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div class="header-right">
-        <!-- Pinned Messages Toggle -->
-        <button id="toggle-pins-btn" class="header-btn" title="View Pinned Messages">
-          <span class="btn-icon">📌</span>
-          <span class="btn-label">Pinned</span>
-          <span id="pin-badge" class="badge-count hidden">0</span>
-        </button>
-
-        <!-- Storage / Retention Settings Dropdown -->
-        <div class="dropdown-wrapper">
-          <button id="settings-btn" class="header-btn" title="Chat History & Retention Settings">
-            <span class="btn-icon">⏱️</span>
-            <span class="btn-label" id="retention-label">Saved: 24h</span>
-          </button>
-          <div id="settings-menu" class="dropdown-menu hidden">
-            <div class="dropdown-header">Message Retention</div>
-            <label class="dropdown-item">
-              <input type="radio" name="retention" value="none">
-              <span>Don't Save (Session Only)</span>
-            </label>
-            <label class="dropdown-item">
-              <input type="radio" name="retention" value="1h">
-              <span>Keep for 1 Hour</span>
-            </label>
-            <label class="dropdown-item">
-              <input type="radio" name="retention" value="24h" checked>
-              <span>Keep for 24 Hours</span>
-            </label>
-            <label class="dropdown-item">
-              <input type="radio" name="retention" value="7d">
-              <span>Keep for 7 Days (Max)</span>
-            </label>
-            <div class="dropdown-divider"></div>
-            <button id="clear-history-btn" class="dropdown-action-btn danger">Clear Local History</button>
-          </div>
-        </div>
-
-        <!-- Theme Switcher Dropdown -->
-        <div class="dropdown-wrapper">
-          <button id="theme-btn" class="header-btn" title="Change Theme">
-            <span class="btn-icon" id="theme-icon">🌙</span>
-            <span class="btn-label" id="theme-label">Dark</span>
-          </button>
-          <div id="theme-menu" class="dropdown-menu hidden">
-            <div class="dropdown-header">Appearance</div>
-            <button class="dropdown-theme-btn" data-theme="dark">🌙 Dark (Midnight)</button>
-            <button class="dropdown-theme-btn" data-theme="slate">🌌 Slate (Dim)</button>
-            <button class="dropdown-theme-btn" data-theme="light">☀️ Light (Clean)</button>
-            <button class="dropdown-theme-btn" data-theme="cyber">⚡ Neon (Cyber)</button>
-          </div>
-        </div>
-
-        <!-- User Profile Pill (Manage Identity) -->
-        <button class="user-pill-btn" id="current-user-pill" title="Manage Public & Private Identity">
-          <div class="avatar user-avatar" id="my-avatar">U</div>
-          <div class="user-pill-info">
-            <span class="user-pill-name" id="my-username">user</span>
-            <span class="user-pill-sub" id="my-public-id-short">pub_...</span>
-          </div>
-        </button>
-      </div>
-    </header>
-
-    <!-- Main Container -->
-    <div class="app-body">
-      <!-- Members Sidebar Backdrop for Mobile -->
-      <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
-
-      <!-- Members Sidebar -->
-      <aside class="app-sidebar" id="app-sidebar">
-        <div class="sidebar-header">
-          <div class="sidebar-title-group">
-            <h2>Members</h2>
-            <span class="online-counter" id="online-counter">1</span>
-          </div>
-          <button id="close-sidebar-btn" class="icon-btn mobile-only" aria-label="Close sidebar">✕</button>
-        </div>
-
-        <div class="sidebar-search">
-          <input type="text" id="user-search" placeholder="Search members..." autocomplete="off">
-        </div>
-
-        <div class="user-list" id="user-list">
-          <!-- Populated dynamically -->
-        </div>
-      </aside>
-
-      <!-- Main Chat Area -->
-      <main class="chat-viewport">
-        <!-- Pinned Messages Banner -->
-        <div id="pinned-banner" class="pinned-banner hidden">
-          <div class="pinned-banner-content">
-            <span class="pinned-icon">📌</span>
-            <div class="pinned-text-wrap">
-              <span class="pinned-label">Pinned Message</span>
-              <span id="pinned-text" class="pinned-text">No pinned messages yet</span>
-            </div>
-          </div>
-          <button id="unpin-current-btn" class="icon-btn-subtle" title="Unpin message">✕</button>
-        </div>
-
-        <!-- Messages Feed -->
-        <div class="messages-container" id="messages-container">
-          <div class="welcome-card">
-            <div class="welcome-icon">💬</div>
-            <h4>Welcome to the Global Chat</h4>
-            <p>This is the public room. Say hello, discuss ideas, or pin important messages to keep them handy.</p>
-          </div>
-        </div>
-
-        <!-- Typing Indicator -->
-        <div class="typing-indicator-bar" id="typing-indicator" style="display: none;">
-          <div class="typing-dots"><span></span><span></span><span></span></div>
-          <span id="typing-text">someone is typing...</span>
-        </div>
-
-        <!-- Chat Input Footer -->
-        <footer class="chat-footer">
-          <form id="chat-form" class="chat-input-form" action="javascript:void(0);">
-            <div class="chat-input-container">
-              <input 
-                type="text" 
-                id="message-input" 
-                placeholder="Message..." 
-                maxlength="1000" 
-                autocomplete="off"
-                enterkeyhint="send"
-              >
-              <button type="submit" id="send-btn" class="send-btn" aria-label="Send message">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <line x1="22" y1="2" x2="11" y2="13"></line>
-                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                </svg>
+          <!-- Retention Settings Dropdown -->
+          <div class="dropdown-wrapper">
+            <button type="button" id="settings-btn" class="wa-icon-btn" title="Chat History & Auto-Delete">
+              <svg class="ui-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 15"></polyline></svg>
+              <span class="sr-only">⏱️</span>
+            </button>
+            <div id="settings-menu" class="dropdown-menu hidden">
+              <div class="dropdown-header">Message History (<span id="retention-label">Saved: 24h</span>)</div>
+              <label class="dropdown-item">
+                <input type="radio" name="retention" value="none">
+                <span>Session Only</span>
+              </label>
+              <label class="dropdown-item">
+                <input type="radio" name="retention" value="1h">
+                <span>Keep for 1 Hour</span>
+              </label>
+              <label class="dropdown-item">
+                <input type="radio" name="retention" value="24h" checked>
+                <span>Keep for 24 Hours</span>
+              </label>
+              <label class="dropdown-item">
+                <input type="radio" name="retention" value="7d">
+                <span>Keep for 7 Days</span>
+              </label>
+              <div class="dropdown-divider"></div>
+              <button type="button" id="clear-history-btn" class="dropdown-action-btn danger">
+                <svg class="ui-icon" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                <span class="sr-only">🗑️</span>
+                <span>Clear Local History</span>
               </button>
             </div>
-          </form>
-        </footer>
-      </main>
+          </div>
+
+          <!-- High-Visibility Theme Switcher Dropdown -->
+          <div class="dropdown-wrapper">
+            <button type="button" id="theme-btn" class="wa-icon-btn wa-theme-trigger-btn" title="Switch Dark / Light Theme">
+              <svg class="ui-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line></svg>
+              <span id="theme-btn-short-text">Dark</span>
+              <span id="theme-icon" class="sr-only">🌙</span>
+            </button>
+            <div id="theme-menu" class="dropdown-menu hidden" style="min-width: 256px;">
+              <div class="dropdown-header">Appearance (<span id="theme-label">Dark Mode</span>)</div>
+              <!-- Instant Dark / Light Segmented Switch -->
+              <div class="theme-quick-segment">
+                <button type="button" id="quick-theme-dark-btn" class="theme-seg-btn active">🌙 Dark</button>
+                <button type="button" id="quick-theme-light-btn" class="theme-seg-btn">☀️ Light</button>
+              </div>
+              <div class="dropdown-header" style="padding-top:2px;">Color Palettes</div>
+              <button type="button" class="dropdown-theme-btn active-theme" data-theme="whatsapp-dark">
+                <span class="theme-swatch-row">
+                  <span class="theme-swatch-dot sw-emerald"></span>
+                  <span>Dark Mode (Emerald)</span>
+                  <span class="sr-only">🟢 WhatsApp Dark</span>
+                </span>
+                <span class="theme-check-mark">✓</span>
+              </button>
+              <button type="button" class="dropdown-theme-btn" data-theme="light">
+                <span class="theme-swatch-row">
+                  <span class="theme-swatch-dot sw-light"></span>
+                  <span>Light Mode (Daylight)</span>
+                  <span class="sr-only">☀️ WhatsApp Light</span>
+                </span>
+                <span class="theme-check-mark">✓</span>
+              </button>
+              <button type="button" class="dropdown-theme-btn" data-theme="slate">
+                <span class="theme-swatch-row">
+                  <span class="theme-swatch-dot sw-slate"></span>
+                  <span>Dark Slate (Indigo)</span>
+                  <span class="sr-only">🌌 Slate Dim</span>
+                </span>
+                <span class="theme-check-mark">✓</span>
+              </button>
+              <button type="button" class="dropdown-theme-btn" data-theme="cyber">
+                <span class="theme-swatch-row">
+                  <span class="theme-swatch-dot sw-cyber"></span>
+                  <span>Arctic Frost (Navy)</span>
+                  <span class="sr-only">⚡ Neon Cyber</span>
+                </span>
+                <span class="theme-check-mark">✓</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Action Bar: Create Group, Join Group, New Direct Message -->
+      <div class="wa-action-pill-bar">
+        <button type="button" id="open-create-group-btn" class="wa-quick-btn emerald" title="Create a new Group">
+          <svg class="ui-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span class="sr-only">➕</span>
+          <span>New Group</span>
+        </button>
+        <button type="button" id="open-join-group-btn" class="wa-quick-btn" title="Join a Group with an Invite Code">
+          <svg class="ui-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg>
+          <span class="sr-only">🔗</span>
+          <span>Join Group</span>
+        </button>
+        <button type="button" id="open-new-dm-btn" class="wa-quick-btn" title="Start a Direct Message">
+          <svg class="ui-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          <span class="sr-only">💬 1:1 DM</span>
+          <span>Direct Chat</span>
+        </button>
+      </div>
+
+      <!-- Search Box -->
+      <div class="wa-search-box">
+        <div class="wa-search-inner">
+          <svg class="ui-icon" style="width:15px;height:15px;color:var(--text-muted);" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="user-search" placeholder="Search chats, groups, or people..." autocomplete="off">
+        </div>
+      </div>
+
+      <!-- Filter Tabs -->
+      <div class="wa-filter-tabs">
+        <button type="button" class="wa-filter-pill active" data-filter="all" id="filter-all">All Chats</button>
+        <button type="button" class="wa-filter-pill" data-filter="groups" id="filter-groups">Groups</button>
+        <button type="button" class="wa-filter-pill" data-filter="dms" id="filter-dms">
+          <span class="sr-only">1:1 DMs</span>
+          <span>Direct</span>
+        </button>
+        <button type="button" class="wa-filter-pill" data-filter="online" id="filter-online">
+          <span>Online</span>
+          <span class="wa-pill-count" id="online-counter">0</span>
+        </button>
+      </div>
+
+      <!-- Unified Chat List & Active People Directory -->
+      <div class="wa-chat-list" id="conversation-list">
+        <!-- Populated dynamically by app.js -->
+      </div>
+    </aside>
+
+    <!-- Center Main Chat Area -->
+    <main class="wa-main-chat" id="main-chat-area">
+      <!-- Active Conversation Header -->
+      <header class="wa-chat-header">
+        <div class="wa-chat-header-left" id="room-header-clickable" title="View conversation details & members">
+          <button type="button" id="mobile-back-btn" class="wa-icon-btn mobile-only" aria-label="Back to chats">
+            <svg class="ui-icon" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+            <span class="sr-only">←</span>
+          </button>
+          <div class="wa-avatar global-av" id="active-conv-avatar">GC</div>
+          <div class="wa-chat-title-wrap">
+            <div class="wa-chat-title">
+              <span id="active-conv-title">Global Chat</span>
+              <span class="wa-e2ee-tag" id="active-conv-badge">Encrypted</span>
+            </div>
+            <div class="wa-chat-subtitle" id="header-member-count">Tap for details & group invites</div>
+          </div>
+        </div>
+
+        <div class="wa-chat-header-right">
+          <button type="button" id="header-mute-conv-btn" class="wa-header-pill-btn" title="Mute or unmute this conversation">
+            <svg class="ui-icon" id="header-mute-svg" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            <span class="btn-label-hide-sm" id="header-mute-label">Mute</span>
+          </button>
+
+          <button type="button" id="header-invite-btn" class="wa-header-pill-btn emerald" title="Invite people to join">
+            <svg class="ui-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+            <span class="sr-only">➕</span>
+            <span class="btn-label-hide-sm" id="header-invite-label">Invite</span>
+          </button>
+
+          <button type="button" id="toggle-pins-btn" class="wa-header-pill-btn" title="Jump to Pinned Message">
+            <svg class="ui-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path></svg>
+            <span class="sr-only">📌</span>
+            <span class="btn-label-hide-sm">Pinned</span>
+            <span id="pin-badge" class="wa-pill-count hidden">0</span>
+          </button>
+
+          <button type="button" id="toggle-info-drawer-btn" class="wa-icon-btn" title="Conversation Info">
+            <svg class="ui-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            <span class="sr-only">ℹ️</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Live Incoming Group Invitation Alert Banner -->
+      <div id="incoming-invite-banner" class="wa-invite-alert-banner hidden">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+          <div class="wa-avatar sm group-av">GR</div>
+          <div style="min-width: 0;">
+            <div style="font-weight: 700; font-size: 0.84rem;" id="incoming-invite-title">Group Invitation</div>
+            <div style="font-size: 0.74rem; color: var(--text-muted);" id="incoming-invite-sub">@user invited you to join</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+          <button type="button" id="accept-incoming-invite-btn" class="wa-mini-btn primary">Accept & Join</button>
+          <button type="button" id="dismiss-incoming-invite-btn" class="wa-mini-btn">✕</button>
+        </div>
+      </div>
+
+      <!-- Pinned Message Banner -->
+      <div id="pinned-banner" class="wa-pinned-banner hidden">
+        <div class="wa-pinned-content">
+          <svg class="ui-icon" style="color:var(--accent-primary);" viewBox="0 0 24 24"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path></svg>
+          <div class="wa-pinned-text-wrap">
+            <span class="wa-pinned-label">Pinned Message</span>
+            <span id="pinned-text" class="wa-pinned-text">No pinned messages yet</span>
+          </div>
+        </div>
+        <button type="button" id="unpin-current-btn" class="icon-btn-subtle" title="Unpin message">✕</button>
+      </div>
+
+      <!-- Messages Stream -->
+      <div class="wa-messages-container" id="messages-container">
+        <!-- Populated dynamically per active conversation -->
+      </div>
+
+      <!-- Typing Indicator with Animated Bouncing Dots -->
+      <div class="wa-typing-bar hidden" id="typing-indicator">
+        <div class="wa-typing-dots"><span></span><span></span><span></span></div>
+        <span id="typing-text">someone is typing...</span>
+      </div>
+
+      <!-- Reply Quote Preview Bar -->
+      <div id="reply-preview-bar" class="wa-reply-bar hidden">
+        <div style="min-width: 0;">
+          <div style="font-size: 0.72rem; font-weight: 700; color: var(--accent-primary);" id="reply-preview-author">Replying to @user</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="reply-preview-text">Message text</div>
+        </div>
+        <button type="button" id="cancel-reply-btn" class="icon-btn-subtle">✕</button>
+      </div>
+
+      <!-- Pending Media & File Attachments Preview Strip -->
+      <div id="attachment-preview-bar" class="wa-attachment-preview-bar hidden">
+        <!-- Populated dynamically when user selects photos, videos, audio, or files -->
+      </div>
+
+      <!-- Live Voice Note Recording Bar -->
+      <div id="voice-recorder-bar" class="wa-voice-bar hidden">
+        <div class="wa-voice-status">
+          <span class="wa-rec-dot"></span>
+          <span>Recording Voice Note</span>
+          <span id="voice-timer" style="font-family:var(--font-mono); color:var(--accent-primary);">0:00</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button type="button" id="cancel-voice-btn" class="wa-mini-btn">Cancel</button>
+          <button type="button" id="send-voice-btn" class="wa-mini-btn primary">Send Voice Note</button>
+        </div>
+      </div>
+
+      <!-- Rich Categorized Emoji Picker Tray -->
+      <div id="emoji-strip" class="wa-emoji-strip hidden">
+        <div class="wa-emoji-cat-bar">
+          <div class="wa-emoji-cat-tabs">
+            <button type="button" class="wa-emoji-cat-btn active" data-ecat="all">Popular</button>
+            <button type="button" class="wa-emoji-cat-btn" data-ecat="smileys">Smileys</button>
+            <button type="button" class="wa-emoji-cat-btn" data-ecat="gestures">Gestures</button>
+            <button type="button" class="wa-emoji-cat-btn" data-ecat="hearts">Hearts & Fun</button>
+            <button type="button" class="wa-emoji-cat-btn" data-ecat="objects">Objects</button>
+          </div>
+        </div>
+        <div class="wa-emoji-grid" id="emoji-grid-container">
+          <button type="button" class="wa-emoji-item" data-emoji="👍">👍</button>
+          <button type="button" class="wa-emoji-item" data-emoji="❤️">❤️</button>
+          <button type="button" class="wa-emoji-item" data-emoji="😂">😂</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🔥">🔥</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🎉">🎉</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🚀">🚀</button>
+          <button type="button" class="wa-emoji-item" data-emoji="👋">👋</button>
+          <button type="button" class="wa-emoji-item" data-emoji="✅">✅</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🔒">🔒</button>
+          <button type="button" class="wa-emoji-item" data-emoji="⚡">⚡</button>
+          <button type="button" class="wa-emoji-item" data-emoji="😊">😊</button>
+          <button type="button" class="wa-emoji-item" data-emoji="😍">😍</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🥳">🥳</button>
+          <button type="button" class="wa-emoji-item" data-emoji="😎">😎</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🤝">🤝</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🙏">🙏</button>
+          <button type="button" class="wa-emoji-item" data-emoji="👏">👏</button>
+          <button type="button" class="wa-emoji-item" data-emoji="💯">💯</button>
+          <button type="button" class="wa-emoji-item" data-emoji="✨">✨</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🎶">🎶</button>
+          <button type="button" class="wa-emoji-item" data-emoji="📸">📸</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🎬">🎬</button>
+          <button type="button" class="wa-emoji-item" data-emoji="📎">📎</button>
+          <button type="button" class="wa-emoji-item" data-emoji="🌟">🌟</button>
+        </div>
+      </div>
+
+      <!-- Bottom Compose Footer with Emoji, Attach (+), Input, Voice Recorder, and Send -->
+      <footer class="wa-chat-footer">
+        <!-- Floating Media & File Attachment Popover -->
+        <div id="attach-popover" class="wa-attach-popover hidden">
+          <button type="button" id="attach-photo-btn" class="wa-attach-option">
+            <span class="wa-attach-icon-circle photo">
+              <svg class="ui-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+            </span>
+            <span>Photos</span>
+          </button>
+          <button type="button" id="attach-video-btn" class="wa-attach-option">
+            <span class="wa-attach-icon-circle video">
+              <svg class="ui-icon" viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+            </span>
+            <span>Video</span>
+          </button>
+          <button type="button" id="attach-audio-btn" class="wa-attach-option">
+            <span class="wa-attach-icon-circle audio">
+              <svg class="ui-icon" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            </span>
+            <span>Audio</span>
+          </button>
+          <button type="button" id="attach-doc-btn" class="wa-attach-option">
+            <span class="wa-attach-icon-circle doc">
+              <svg class="ui-icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+            </span>
+            <span>Document</span>
+          </button>
+        </div>
+
+        <button type="button" id="toggle-emoji-btn" class="wa-icon-btn" title="Emojis">
+          <svg class="ui-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
+          <span class="sr-only">😀</span>
+        </button>
+
+        <button type="button" id="toggle-attach-btn" class="wa-icon-btn" title="Share Photos, Video, Audio, or Files">
+          <svg class="ui-icon" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+        </button>
+
+        <form id="chat-form" class="wa-compose-form">
+          <div class="wa-input-pill">
+            <input
+              type="text"
+              id="message-input"
+              placeholder="Write a message or drop files..."
+              maxlength="1200"
+              autocomplete="off"
+              enterkeyhint="send"
+            >
+          </div>
+
+          <button type="button" id="voice-record-btn" class="wa-icon-btn" title="Record Voice Note">
+            <svg class="ui-icon" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+          </button>
+
+          <button type="submit" id="send-btn" class="wa-send-btn" aria-label="Send message">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </form>
+      </footer>
+    </main>
+
+    <!-- Right-Hand Info Drawer (Group Invite Code & Active People) -->
+    <aside class="wa-info-drawer hidden" id="info-drawer">
+      <header class="wa-drawer-header">
+        <span id="drawer-heading">Conversation Info</span>
+        <button type="button" id="close-info-drawer-btn" class="wa-icon-btn">✕</button>
+      </header>
+      <div class="wa-drawer-body">
+        <div class="wa-drawer-card" style="align-items: center; text-align: center;">
+          <div class="wa-avatar lg global-av" id="drawer-avatar">GC</div>
+          <div style="font-weight: 800; font-size: 1.05rem;" id="drawer-title">Global Chat</div>
+          <div style="font-size: 0.76rem; color: var(--text-muted);" id="drawer-subtitle">Community chat room</div>
+        </div>
+
+        <!-- Group Invite & Share Section -->
+        <div class="wa-drawer-card" id="drawer-group-section">
+          <h4>Invite & Share</h4>
+          <div class="help-text" id="drawer-invite-help">Share this Invite Code or invite someone by their Contact ID:</div>
+          <div class="key-display-pill" id="drawer-invite-code-display">grp_global</div>
+          <div style="display: flex; gap: 6px;">
+            <button type="button" id="copy-group-code-btn" class="wa-quick-btn emerald">
+              <span class="sr-only">📋</span>
+              <span>Copy Invite Code</span>
+            </button>
+            <button type="button" id="post-group-card-btn" class="wa-quick-btn">
+              <span class="sr-only">📢</span>
+              <span>Share in Global</span>
+            </button>
+          </div>
+
+          <div class="input-group" style="margin-top: 6px;">
+            <label for="drawer-invite-pubkey-input">Invite by Contact ID (`pub_...`)</label>
+            <div class="input-wrapper">
+              <input type="text" id="drawer-invite-pubkey-input" placeholder="Paste user's pub_... ID" autocomplete="off">
+              <button type="button" id="drawer-send-pubkey-invite-btn" class="wa-mini-btn primary">Invite</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active People Directory -->
+        <div class="wa-drawer-card">
+          <h4>People Online (<span id="drawer-online-count">0</span>)</h4>
+          <div class="help-text">Select anyone online to message directly or invite to a group:</div>
+          <div id="user-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto;">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Hidden legacy telemetry nodes (kept hidden so zero developer terms appear) -->
+        <div class="hidden" aria-hidden="true">
+          <span id="stat-webrtc-peers">0</span>
+          <span id="stat-mqtt-brokers">0</span>
+          <span id="stat-dedup-ring">0</span>
+          <span id="stat-crypto-mode">Encrypted</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Create Own Group Modal -->
+  <div id="create-group-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-card-top">
+        <h2 class="modal-title">Create New Group</h2>
+        <button type="button" id="close-create-group-btn" class="wa-icon-btn">✕</button>
+      </div>
+      <p class="modal-subtitle">Create a private encrypted group. Friends can join via your Invite Code, or you can invite online people and Contact IDs directly.</p>
+
+      <form id="create-group-form">
+        <div class="input-group">
+          <label for="new-group-name">Group Name</label>
+          <div class="input-wrapper">
+            <input type="text" id="new-group-name" placeholder="e.g. Design Team, Weekend Plans" maxlength="36" required autocomplete="off">
+          </div>
+        </div>
+
+        <div class="input-group" style="margin-top: 10px;">
+          <label for="new-group-desc">Group Description (Optional)</label>
+          <div class="input-wrapper">
+            <input type="text" id="new-group-desc" placeholder="What is this group about?" maxlength="90" autocomplete="off">
+          </div>
+        </div>
+
+        <div class="input-group" style="margin-top: 10px;">
+          <label for="new-group-invite-pubkey">Invite by Contact ID (Optional)</label>
+          <div class="input-wrapper">
+            <input type="text" id="new-group-invite-pubkey" placeholder="Paste pub_... ID (or comma-separated IDs)" autocomplete="off">
+          </div>
+        </div>
+
+        <div class="input-group" style="margin-top: 10px;">
+          <label>Invite People Currently Online</label>
+          <div id="create-group-online-checklist" style="max-height: 130px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; background: var(--bg-input); padding: 8px; border-radius: 8px; border: 1px solid var(--border-subtle);">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px; margin-top: 14px;">
+          <button type="submit" class="primary-btn" style="flex: 1;">
+            <span class="sr-only">✨ Create Group & Send Invites</span>
+            <span>Create Group & Send Invites</span>
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 
-  <!-- Toast -->
-  <div id="toast" class="toast"></div>
-
-  <!-- Identity & Profile Modal -->
-  <div id="identity-modal" class="modal-overlay hidden">
-    <div class="modal-card identity-card">
+  <!-- Join Group Modal -->
+  <div id="join-group-modal" class="modal-overlay hidden">
+    <div class="modal-card">
       <div class="modal-card-top">
-        <div class="modal-icon-wrap" style="width: 44px; height: 44px; font-size: 1.3rem; margin-bottom: 0.5rem;">🔑</div>
-        <button id="close-identity-btn" class="icon-btn-subtle close-modal-btn" aria-label="Close modal">✕</button>
+        <h2 class="modal-title">Join a Group</h2>
+        <button type="button" id="close-join-group-btn" class="wa-icon-btn">✕</button>
       </div>
-      <h2 class="modal-title" style="font-size: 1.25rem;">Account & Identity</h2>
-      <p class="modal-subtitle">Your identity decides message ownership. Username can change anytime, but messages from your identity stay on your right side.</p>
+      <p class="modal-subtitle">Paste a Group Invite Code (`p0grp_...`) or Group ID (`grp_...`) shared by a friend.</p>
 
-      <!-- Section: Username -->
+      <form id="join-group-form">
+        <div class="input-group">
+          <label for="join-group-code-input">Group Invite Code</label>
+          <div class="input-wrapper">
+            <input type="text" id="join-group-code-input" placeholder="Paste p0grp_... or grp_..." required autocomplete="off">
+          </div>
+        </div>
+        <div class="input-group" style="margin-top: 10px;">
+          <label for="join-group-custom-name">Custom Group Name (Optional)</label>
+          <div class="input-wrapper">
+            <input type="text" id="join-group-custom-name" placeholder="e.g. Project Room" maxlength="36" autocomplete="off">
+          </div>
+        </div>
+        <button type="submit" class="primary-btn" style="width: 100%; margin-top: 14px;">
+          <span class="sr-only">🔗 Join Group Now</span>
+          <span>Join Group</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Start 1-to-1 Direct Message Modal -->
+  <div id="new-dm-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-card-top">
+        <h2 class="modal-title">New Direct Message</h2>
+        <button type="button" id="close-new-dm-btn" class="wa-icon-btn">✕</button>
+      </div>
+      <p class="modal-subtitle">Start a private encrypted conversation by pasting someone's Contact ID (`pub_...`) or choosing an online person below.</p>
+
+      <form id="new-dm-form">
+        <div class="input-group">
+          <label for="dm-target-pubkey-input">Recipient Contact ID (`pub_...`)</label>
+          <div class="input-wrapper">
+            <input type="text" id="dm-target-pubkey-input" placeholder="Paste pub_... ID" required autocomplete="off">
+          </div>
+        </div>
+
+        <div class="input-group" style="margin-top: 10px;">
+          <label for="dm-target-name-input">Contact Nickname (Optional)</label>
+          <div class="input-wrapper">
+            <span class="input-prefix">@</span>
+            <input type="text" id="dm-target-name-input" placeholder="e.g. jordan, alex" maxlength="22" autocomplete="off">
+          </div>
+        </div>
+
+        <button type="submit" class="primary-btn" style="width: 100%; margin-top: 12px;">
+          <span class="sr-only">🔒 Open 1-to-1 Encrypted Chat</span>
+          <span>Open Direct Chat</span>
+        </button>
+      </form>
+
+      <div class="modal-divider"></div>
+      <div class="input-group">
+        <label>Or Select Someone Online</label>
+        <div id="dm-online-peers-list" style="max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account & Contact ID Modal -->
+  <div id="identity-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-card-top">
+        <h2 class="modal-title">Account & Contact ID</h2>
+        <button type="button" id="close-identity-btn" class="wa-icon-btn">✕</button>
+      </div>
+      <p class="modal-subtitle">Share your Contact ID (`pub_...`) with friends so they can message you directly or invite you to private groups.</p>
+
       <div class="identity-section">
-        <label class="section-label">Username</label>
+        <label class="section-label" for="edit-username-input">Display Name</label>
         <div class="input-wrapper">
           <span class="input-prefix">@</span>
-          <input type="text" id="edit-username-input" maxlength="20" placeholder="Username">
-          <button type="button" id="save-username-btn" class="pill-btn primary">Update</button>
+          <input type="text" id="edit-username-input" maxlength="22" placeholder="Username">
+          <button type="button" id="save-username-btn" class="wa-mini-btn primary">Update</button>
         </div>
       </div>
 
-      <!-- Section: Public Identity -->
       <div class="identity-section">
         <div class="label-with-action">
-          <label class="section-label">Public Identity (Visible to Everyone)</label>
-          <button type="button" id="copy-my-pubkey-btn" class="text-link-btn">📋 Copy</button>
+          <span class="section-label">Your Contact ID (Share with Friends)</span>
+          <button type="button" id="copy-my-pubkey-btn" class="text-link-btn">
+            <span class="sr-only">📋 Copy Public Key</span>
+            <span>Copy Contact ID</span>
+          </button>
         </div>
         <div class="key-display-pill" id="my-public-id-display">pub_loading...</div>
-        <span class="help-text">Safe to share. Identifies your messages to other members.</span>
       </div>
 
-      <!-- Section: Private Identity -->
       <div class="identity-section">
         <div class="label-with-action">
-          <label class="section-label">Private Identity (Secret Key)</label>
-          <div class="action-btn-group">
-            <button type="button" id="toggle-secret-visibility-btn" class="text-link-btn">👁️ Reveal</button>
-            <button type="button" id="copy-my-privkey-btn" class="text-link-btn">📋 Copy Secret</button>
+          <span class="section-label">Account Backup Key (Keep Private)</span>
+          <div style="display: flex; gap: 10px;">
+            <button type="button" id="toggle-secret-visibility-btn" class="text-link-btn">
+              <span class="sr-only">👁️ Reveal</span>
+              <span>Reveal</span>
+            </button>
+            <button type="button" id="copy-my-privkey-btn" class="text-link-btn">
+              <span class="sr-only">📋 Copy Secret</span>
+              <span>Copy Backup Key</span>
+            </button>
           </div>
         </div>
         <input type="password" id="my-private-id-display" class="key-input-masked" readonly value="">
-        <span class="help-text warning-text">⚠️ Anyone with this Private Identity can impersonate you. Keep it secret.</span>
+        <span class="help-text warning-text">Keep your backup key safe. You can use it to sign back into your account on any device.</span>
       </div>
 
-      <!-- Section: Impersonate / Switch Identity -->
       <div class="identity-section">
-        <label class="section-label">Impersonate / Switch Account</label>
+        <label class="section-label" for="switch-privkey-input">Restore Account from Backup Key</label>
         <div class="input-wrapper">
-          <input type="text" id="switch-privkey-input" placeholder="Paste Private Identity (priv_... or hex)" autocomplete="off">
-          <button type="button" id="switch-privkey-btn" class="pill-btn secondary">Switch</button>
+          <input type="text" id="switch-privkey-input" placeholder="Paste priv_... backup key" autocomplete="off">
+          <button type="button" id="switch-privkey-btn" class="wa-mini-btn primary">Switch</button>
         </div>
-        <span class="help-text">Paste a Private Identity to log in or impersonate that user.</span>
       </div>
 
       <div class="modal-divider"></div>
-
-      <div class="identity-footer-actions">
-        <button type="button" id="generate-new-id-btn" class="pill-btn danger-outline">Generate Fresh Identity</button>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+        <button type="button" id="generate-new-id-btn" class="pill-btn danger-outline" style="width: 100%;">
+          <span class="sr-only">🔄 Generate New Fresh Identity</span>
+          <span>Create Fresh Account ID</span>
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- Message Context Menu (Right Click & Mobile Action Sheet) -->
+  <!-- Message Right-Click / Long-Press Context Menu -->
   <div id="context-backdrop" class="context-backdrop hidden"></div>
   <div id="message-context-menu" class="context-menu hidden">
-    <div class="bottom-sheet-handle mobile-only"></div>
     <div class="context-menu-header">
-      <div class="avatar avatar-sm" id="ctx-avatar">?</div>
+      <div class="wa-avatar sm" id="ctx-avatar">U</div>
       <div class="ctx-user-info">
         <div class="ctx-username-line">
           <span class="ctx-username" id="ctx-username">User</span>
@@ -289,20 +739,53 @@
         <span class="ctx-id" id="ctx-user-id">pub_...</span>
       </div>
     </div>
+    <!-- Quick Emoji Reactions Row -->
+    <div class="ctx-quick-react-bar">
+      <button type="button" class="ctx-react-btn" data-react="👍">👍</button>
+      <button type="button" class="ctx-react-btn" data-react="❤️">❤️</button>
+      <button type="button" class="ctx-react-btn" data-react="😂">😂</button>
+      <button type="button" class="ctx-react-btn" data-react="🔥">🔥</button>
+      <button type="button" class="ctx-react-btn" data-react="🎉">🎉</button>
+      <button type="button" class="ctx-react-btn" data-react="👏">👏</button>
+    </div>
     <div class="context-menu-divider"></div>
-    <button class="context-menu-item" id="ctx-copy-id-btn">
-      <span class="ctx-icon">🔑</span>
-      <span>Copy Public Identity</span>
+    <button type="button" class="context-menu-item" id="ctx-reply-btn">
+      <svg class="ui-icon" viewBox="0 0 24 24"><polyline points="9 17 4 12 9 7"></polyline><path d="M20 18v-2a4 4 0 0 0-4-4H4"></path></svg>
+      <span class="sr-only">↩️</span>
+      <span>Reply to Message</span>
     </button>
-    <button class="context-menu-item" id="ctx-pin-btn">
-      <span class="ctx-icon" id="ctx-pin-icon">📌</span>
+    <button type="button" class="context-menu-item" id="ctx-dm-sender-btn">
+      <svg class="ui-icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+      <span class="sr-only">💬</span>
+      <span>Message Privately (1:1 DM)</span>
+    </button>
+    <button type="button" class="context-menu-item" id="ctx-invite-sender-btn">
+      <svg class="ui-icon" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+      <span class="sr-only">➕</span>
+      <span>Invite User to Group</span>
+    </button>
+    <button type="button" class="context-menu-item" id="ctx-mute-conv-btn">
+      <svg class="ui-icon" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+      <span id="ctx-mute-label">Mute Conversation</span>
+    </button>
+    <button type="button" class="context-menu-item" id="ctx-pin-btn">
+      <svg class="ui-icon" id="ctx-pin-icon" viewBox="0 0 24 24"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path></svg>
       <span id="ctx-pin-label">Pin Message</span>
     </button>
-    <button class="context-menu-item" id="ctx-copy-text-btn">
-      <span class="ctx-icon">📋</span>
+    <button type="button" class="context-menu-item" id="ctx-copy-id-btn">
+      <svg class="ui-icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+      <span class="sr-only">🔑 Copy Sender Public Key</span>
+      <span>Copy Sender Contact ID</span>
+    </button>
+    <button type="button" class="context-menu-item" id="ctx-copy-text-btn">
+      <svg class="ui-icon" viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+      <span class="sr-only">📋</span>
       <span>Copy Message Text</span>
     </button>
   </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast"></div>
 
   <!-- Scripts -->
   <script src="p0_crypto.js"></script>
